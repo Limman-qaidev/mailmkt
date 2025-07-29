@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir -r requirements.txt
+          pip install flake8 black isort mypy pytest pytest-cov
+      - name: Run flake8
+        run: flake8 .
+      - name: Run black formatting check
+        run: black --check .
+      - name: Run isort check
+        run: isort --check-only .
+      - name: Run mypy
+        run: mypy email_marketing
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir -r requirements.txt
+          pip install pytest pytest-cov
+      - name: Run tests
+        run: pytest --cov=email_marketing --cov-report=xml
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build Docker image
+        run: docker build -t mailmkt-app .
