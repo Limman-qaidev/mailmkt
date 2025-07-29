@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mailmkt"
+version = "0.1.0"
+description = "Modular self-hosted email marketing platform"
+readme = "README.md"
+requires-python = ">=3.13"
+license = {text = "MIT"}
+authors = [{name = "Jonathan Salgado Nieto"}]
+
+[tool.black]
+line-length = 100
+target-version = ["py312", "py313"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.13"
+files = "email_marketing"
+strict = true
+ignore_missing_imports = true
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
