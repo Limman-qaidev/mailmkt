@@ -12,8 +12,13 @@ the same process when ``RUN_TRACKING_WITH_STREAMLIT`` is set.
 """
 
 from __future__ import annotations
-
 import os
+import sys
+
+# Ensure project root is on PYTHONPATH so imports like `email_marketing.dashboard` work
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, root_dir)
+
 import threading
 from typing import Callable
 

@@ -16,6 +16,8 @@ import pandas as pd
 import streamlit as st
 
 from email_marketing.dashboard import style
+from streamlit_autorefresh import st_autorefresh
+
 
 
 def _load_events() -> pd.DataFrame:
@@ -54,9 +56,12 @@ def render_stats_view() -> None:
     """Render the statistics page in Streamlit."""
     st.header("Engagement Statistics")
     # Auto-refresh based on the configured interval
-    refresh_interval = style.get_refresh_interval()
-    st.experimental_rerun = st.experimental_rerun  # quiet mypy complaining
-    st.autorefresh(interval=refresh_interval * 1000, key="stats_refresh")
+    #refresh_interval = style.get_refresh_interval()
+    #st.experimental_rerun = st.experimental_rerun  # quiet mypy complaining
+    auto_refresh = STYLE.get("auto_refresh", 60)
+    if st.button("Refresh now"):
+        st.experimental_rerun()
+
 
     events = _load_events()
     metrics = _compute_metrics(events)
