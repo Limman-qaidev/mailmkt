@@ -55,13 +55,19 @@ def _plot_event_counts(events: pd.DataFrame) -> None:
 def render_stats_view() -> None:
     """Render the statistics page in Streamlit."""
     st.header("Engagement Statistics")
-    # Auto-refresh based on the configured interval
-    #refresh_interval = style.get_refresh_interval()
-    #st.experimental_rerun = st.experimental_rerun  # quiet mypy complaining
-    auto_refresh = STYLE.get("auto_refresh", 60)
-    if st.button("Refresh now"):
-        st.experimental_rerun()
 
+    refresh_interval = style.get_refresh_interval()
+
+    # Check if Streamlit supports autorefresh
+    if hasattr(st, "autorefresh"):
+        # Modern Streamlit version: enable auto-refresh
+        st.autorefresh(interval=refresh_interval * 1000, key="stats_refresh")
+    else:
+        # Older version: cannot auto-refresh
+        st.info(
+            "Autorefresh is not available in this version of Streamlit; "
+            "please reload the page to update statistics."
+        )
 
     events = _load_events()
     metrics = _compute_metrics(events)
