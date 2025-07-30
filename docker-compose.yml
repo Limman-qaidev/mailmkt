@@ -8,9 +8,9 @@ services:
       - ./:/app
       - ./data:/app/data
     environment:
-      - SMTP_HOST=smtp.example.com
+      - SMTP_HOST="smtp.gmail.com"
       - SMTP_PORT=587
-      - SMTP_USERNAME=username
+      - SMTP_USERNAME="salgado.n.jonathan@gmail.com"
       - SMTP_PASSWORD=password
       - MAILGUN_API_KEY=your-api-key
       - MAILGUN_DOMAIN=example.com

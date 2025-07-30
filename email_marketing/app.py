@@ -14,15 +14,13 @@ the same process when ``RUN_TRACKING_WITH_STREAMLIT`` is set.
 from __future__ import annotations
 import os
 import sys
+import threading
+import streamlit as st
 
-# Ensure project root is on PYTHONPATH so imports like `email_marketing.dashboard` work
+# Ensure project root is on PYTHONPATH so imports like
+# `email_marketing.dashboard` work
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, root_dir)
-
-import threading
-from typing import Callable
-
-import streamlit as st
 
 from email_marketing.dashboard import email_editor, stats_view, style
 
@@ -55,7 +53,8 @@ def _start_tracking_server() -> None:
             import uvicorn  # type: ignore
 
             uvicorn.run(
-                tracking_server.app, host="0.0.0.0", port=8000, log_level="info"
+                tracking_server.app, host="0.0.0.0", port=8000,
+                log_level="info"
             )
         elif hasattr(tracking_server, "create_app"):
             app = tracking_server.create_app()
@@ -68,8 +67,11 @@ def _start_tracking_server() -> None:
 
 
 def main() -> None:
-    """Render the Streamlit dashboard and optionally launch the tracking API."""
-    # Apply global Streamlit options and custom CSS defined in the style module.
+    """
+    Render the Streamlit dashboard and optionally launch the tracking API.
+    """
+    # Apply global Streamlit options and custom CSS defined in the style
+    # module.
     st.set_page_config(page_title="Mailmkt Dashboard", layout="wide")
     style.apply_theme()
 

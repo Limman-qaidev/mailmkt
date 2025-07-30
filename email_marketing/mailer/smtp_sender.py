@@ -46,24 +46,43 @@ class SMTPSender(EmailSender):
         # conventions.  If no variables are defined, fall back to sensible
         # defaults.  The priority is:
         # 1. SMTP_HOST / SMTP_PORT
-        # 2. SMTP_SERVER (for host) / SMTP_USER / SMTP_APP_PWD (for credentials)
-        self._host = os.environ.get("SMTP_HOST") or os.environ.get("SMTP_SERVER") or ""
+        # 2. SMTP_SERVER (for host) /
+        #    SMTP_USER / SMTP_APP_PWD (for credentials)
+        self._host = (
+            os.environ.get("SMTP_HOST")
+            or os.environ.get("SMTP_SERVER")
+            or ""
+        )
         self._port = int(
             os.environ.get("SMTP_PORT")
             or os.environ.get("SMTP_SERVER_PORT")
             or "0"
         )
         # Username can be provided via SMTP_USERNAME or SMTP_USER
-        self._username = os.environ.get("SMTP_USERNAME") or os.environ.get("SMTP_USER")
+        self._username = (
+            os.environ.get("SMTP_USERNAME") or os.environ.get("SMTP_USER")
+            )
         # Password can be provided via SMTP_PASSWORD or SMTP_APP_PWD
-        self._password = os.environ.get("SMTP_PASSWORD") or os.environ.get("SMTP_APP_PWD")
+        self._password = (
+            os.environ.get("SMTP_PASSWORD") or os.environ.get("SMTP_APP_PWD")
+        )
         # Use SSL instead of STARTTLS if explicitly requested.
-        self._use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
+        self._use_ssl = (
+            os.environ.get("SMTP_USE_SSL", "false")
+            .lower() in {"1", "true", "yes"}
+        )
         # Enable SMTP client debug output if SMTP_DEBUG is truthy.
-        self._debug = os.environ.get("SMTP_DEBUG", "false").lower() in {"1", "true", "yes"}
+        self._debug = (
+            os.environ.get("SMTP_DEBUG", "false").lower() in {
+                "1", "true", "yes"
+                }
+        )
         # Path to SQLite database for mapping msg_id to recipient
         self._db_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "..", "data", "email_map.db"
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "data",
+            "email_map.db",
         )
 
         self._init_db()
@@ -100,10 +119,14 @@ class SMTPSender(EmailSender):
                 """
             )
 
-    def _store_mapping(self, msg_id: str, recipient: str, variant: Optional[str]) -> None:
+    def _store_mapping(self, msg_id: str,
+                       recipient: str,
+                       variant: Optional[str]) -> None:
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant) VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO email_map "
+                "(msg_id, recipient, variant) "
+                "VALUES (?, ?, ?)",
                 (msg_id, recipient, variant),
             )
             conn.commit()
@@ -132,9 +155,12 @@ class SMTPSender(EmailSender):
             msg.set_content(html, subtype="html")
 
         try:
-            # Use SSL or plain SMTP with STARTTLS depending on configuration.
+            # Use SSL or plain SMTP with STARTTLS depending on
+            # configuration.
             if self._use_ssl:
-                smtp_conn: smtplib.SMTP = smtplib.SMTP_SSL(self._host, self._port)
+                smtp_conn: smtplib.SMTP = smtplib.SMTP_SSL(
+                    self._host, self._port
+                )
             else:
                 smtp_conn = smtplib.SMTP(self._host, self._port)
             with smtp_conn as smtp:
@@ -149,7 +175,11 @@ class SMTPSender(EmailSender):
                 smtp.send_message(msg)
         except Exception as exc:
             raise RuntimeError(
-                f"Failed to connect or send email via SMTP server at {self._host}:{self._port}: {exc}"
+                (
+                    f"Failed to connect or send email via SMTP server at "
+                    f"{self._host}:{self._port}: {exc}"
+                )
             ) from exc
+
 
 __all__ = ["SMTPSender"]

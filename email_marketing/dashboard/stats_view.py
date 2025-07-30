@@ -20,12 +20,16 @@ from email_marketing.dashboard import style
 
 def _load_events() -> pd.DataFrame:
     db_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "data", "email_events.db"
+        os.path.dirname(os.path.abspath(__file__)), "..", "data",
+        "email_events.db"
     )
     if not os.path.exists(db_path):
-        return pd.DataFrame(columns=["msg_id", "event_type", "client_ip", "ts"])
+        return pd.DataFrame(columns=["msg_id", "event_type", "client_ip",
+                                     "ts"])
     with sqlite3.connect(db_path) as conn:
-        df = pd.read_sql_query("SELECT msg_id, event_type, client_ip, ts FROM events", conn)
+        df = pd.read_sql_query(
+            "SELECT msg_id, event_type, client_ip, ts FROM events", conn
+        )
     # Convert timestamp to datetime
     df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
     return df
@@ -65,7 +69,8 @@ def render_stats_view() -> None:
         st.autorefresh(interval=refresh_interval * 1000, key="stats_refresh")
     else:
         st.info(
-            "Auto‑refresh is not available in this Streamlit version; please reload the page to update statistics."
+            "Auto‑refresh is not available in this Streamlit version; "
+            "please reload the page to update statistics."
         )
 
     events = _load_events()

@@ -13,6 +13,8 @@ from typing import List
 
 import pandas as pd
 import streamlit as st
+import os
+import urllib.parse
 
 from email_marketing.mailer.mailgun_sender import MailgunSender  # type: ignore
 from email_marketing.mailer.smtp_sender import SMTPSender
@@ -46,6 +48,8 @@ def _load_recipients(upload) -> List[str]:
 def render_email_editor() -> None:
     """Render the email editor page in Streamlit."""
     st.header("Email Campaign Editor")
+
+    # 1) Upload recipient file
     upload = st.file_uploader(
         "Upload recipient list (CSV or Excel)",
         type=["csv", "xls", "xlsx"],
@@ -55,38 +59,97 @@ def render_email_editor() -> None:
         st.success(f"Loaded {len(recipients)} recipients.")
         st.dataframe(pd.DataFrame({"email": recipients}))
 
+    # 2) Campaign fields
     subject = st.text_input("Subject", max_chars=200)
-    html = st.text_area(
+    html_body = st.text_area(
         "HTML Body",
         height=300,
         placeholder="<p>Hello {{ name }}, welcome to our newsletter.</p>",
     )
-    sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
-    send_button = st.button("Send Email", disabled=not recipients or not html)
-    if send_button:
-        if sender_choice == "SMTP":
-            sender = SMTPSender()
-        else:
-            try:
-                sender = MailgunSender()
-            except Exception as exc:
-                st.error(f"Error initialising Mailgun sender: {exc}")
-                return
 
-        progress = st.progress(0.0)
-        for i, email in enumerate(recipients):
-            # Assign A/B variant and generate a unique message ID.
-            variant = assign_variant(email)
-            msg_id = uuid.uuid4().hex
-            try:
-                sender.send_email(
-                    recipient=email,
-                    msg_id=msg_id,
-                    html=html,
-                    subject=subject,
-                    variant=variant,
-                )
-            except Exception as exc:
-                st.error(f"Failed to send to {email}: {exc}")
-            progress.progress((i + 1) / len(recipients))
-        st.success("Campaign sent.")
+    # 3) Sender choice
+    sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
+    send_button = st.button(
+        "Send Email",
+        disabled=not recipients or not html_body
+    )
+
+    if not send_button:
+        return
+
+    # 4) Instantiate sender
+    if sender_choice == "SMTP":
+        sender = SMTPSender()
+    else:
+        try:
+            sender = MailgunSender()
+        except Exception as exc:
+            st.error(f"Error initializing Mailgun sender: {exc}")
+            return
+
+    # 5) Base URL for tracking
+    tracking_url = os.environ.get("TRACKING_URL", "http://localhost:8000")
+
+    progress = st.progress(0.0)
+    total = len(recipients)
+
+    for i, email in enumerate(recipients, start=1):
+        # Assign A/B variant and generate a unique message ID.
+        variant = assign_variant(email)
+        msg_id = uuid.uuid4().hex
+
+        # Build tracking elements:
+        # a) Open pixel
+        pixel_tag = (
+            f'<img src="{tracking_url}/pixel?msg_id={msg_id}" '
+            'width="1" height="1" style="display:none;"/>'
+        )
+
+        # b) Click link
+        click_params = urllib.parse.urlencode({
+            "msg_id": msg_id,
+            "url": "https://example.com"
+        })
+        click_tag = (
+            f'<p><a href="{tracking_url}/click?{click_params}">'
+            'Click here</a></p>'
+        )
+
+        # c) Unsubscribe link
+        unsub_params = urllib.parse.urlencode({"msg_id": msg_id})
+        unsub_tag = (
+            f'<p><a href="{tracking_url}/unsubscribe?{unsub_params}">'
+            'Unsubscribe</a></p>'
+        )
+
+        # d) Complaint link
+        complaint_params = urllib.parse.urlencode({"msg_id": msg_id})
+        complaint_tag = (
+            f'<p><a href="{tracking_url}/complaint?{complaint_params}">'
+            'Report spam</a></p>'
+        )
+
+        # Merge original body with tracking
+        full_html = (
+            pixel_tag +
+            html_body +
+            click_tag +
+            unsub_tag +
+            complaint_tag
+        )
+
+        # Send the email
+        try:
+            sender.send_email(
+                recipient=email,
+                msg_id=msg_id,
+                html=full_html,
+                subject=subject,
+                variant=variant,
+            )
+        except Exception as exc:
+            st.error(f"Failed to send to {email}: {exc}")
+
+        progress.progress(i / total)
+
+    st.success("Campaign sent.")
