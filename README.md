@@ -109,10 +109,9 @@ The following environment variables configure runtime behaviour:
 
 | Variable          | Description                                |
 |-------------------|--------------------------------------------|
-| `SMTP_HOST`       | Hostname of the SMTP server                |
-| `SMTP_PORT`       | Port for the SMTP server                   |
-| `SMTP_USERNAME`   | Username for SMTP authentication           |
-| `SMTP_PASSWORD`   | Password for SMTP authentication           |
+| `SMTP_HOST` / `SMTP_SERVER`           | Hostname of the SMTP server.  Either variable may be used.             |
+| `SMTP_PORT` / `SMTP_SERVER_PORT`      | Port for the SMTP server.  Defaults to 587 if unset.                  |
+| `SMTP_USERNAME` / `SMTP_USER`         | Username for SMTP authentication.  The application checks both names. |
 | `MAILGUN_API_KEY` | API key for Mailgun                        |
 | `MAILGUN_DOMAIN`  | Domain configured in Mailgun               |
 | `TRACKING_URL`    | Base URL of the tracking server            |

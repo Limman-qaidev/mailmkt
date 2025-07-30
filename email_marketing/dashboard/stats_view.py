@@ -16,8 +16,6 @@ import pandas as pd
 import streamlit as st
 
 from email_marketing.dashboard import style
-from streamlit_autorefresh import st_autorefresh
-
 
 
 def _load_events() -> pd.DataFrame:
@@ -53,20 +51,21 @@ def _plot_event_counts(events: pd.DataFrame) -> None:
 
 
 def render_stats_view() -> None:
-    """Render the statistics page in Streamlit."""
+    """Render the statistics page in Streamlit.
+
+    This function displays aggregate metrics for all recorded events and
+    automatically refreshes the view at a configurable interval.  The
+    refresh interval is obtained via :func:`style.get_refresh_interval`.
+    """
     st.header("Engagement Statistics")
-
+    # Determine refresh interval (default 60 seconds if not set).
     refresh_interval = style.get_refresh_interval()
-
-    # Check if Streamlit supports autorefresh
+    # Configure automatic refresh only if the method is available.
     if hasattr(st, "autorefresh"):
-        # Modern Streamlit version: enable auto-refresh
         st.autorefresh(interval=refresh_interval * 1000, key="stats_refresh")
     else:
-        # Older version: cannot auto-refresh
         st.info(
-            "Autorefresh is not available in this version of Streamlit; "
-            "please reload the page to update statistics."
+            "Auto‑refresh is not available in this Streamlit version; please reload the page to update statistics."
         )
 
     events = _load_events()
@@ -80,7 +79,6 @@ def render_stats_view() -> None:
 
     if not events.empty:
         _plot_event_counts(events)
-        # Display a table of recent events sorted by timestamp descending
         st.subheader("Recent Events")
         st.dataframe(events.sort_values(by="ts", ascending=False))
     else:
