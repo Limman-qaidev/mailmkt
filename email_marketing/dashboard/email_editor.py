@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 import os
 import urllib.parse
+import time
 
 from email_marketing.mailer.mailgun_sender import MailgunSender  # type: ignore
 from email_marketing.mailer.smtp_sender import SMTPSender
@@ -85,7 +86,7 @@ def render_email_editor() -> None:
 
     # 5) Determine tracking URL
     # Override tracking URL manually in the UI if needed
-    default_tracking_url = os.environ.get("TRACKING_URL", "http://localhost:8000")
+    tracking_url = os.environ.get("TRACKING_URL", "http://localhost:8000")
     """tracking_url = st.text_input(
         "Tracking URL",
         value=default_tracking_url,
@@ -94,10 +95,10 @@ def render_email_editor() -> None:
 
     # 6) Debug: show the exact URLs that will be embedded
     sample_id = uuid.uuid4().hex
-    """pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
-    click_debug = f"{tracking_url}/click?{urllib.parse.urlencode({'msg_id': sample_id, 'url': 'https://example.com'})}"
-    unsub_debug = f"{tracking_url}/unsubscribe?msg_id={sample_id}"
-    complaint_debug = f"{tracking_url}/complaint?msg_id={sample_id}""""
+    # pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
+    # click_debug = f"{tracking_url}/click?{urllib.parse.urlencode({'msg_id': sample_id, 'url': 'https://example.com'})}"
+    # unsub_debug = f"{tracking_url}/unsubscribe?msg_id={sample_id}"
+    # complaint_debug = f"{tracking_url}/complaint?msg_id={sample_id}"
 
     """st.markdown("### 🔍 Debug: Embedded Tracking URLs")
     st.write("**Pixel URL:**", pixel_debug)
@@ -117,9 +118,11 @@ def render_email_editor() -> None:
         msg_id = uuid.uuid4().hex
 
         # a) Build open-pixel tag
+        timestamp = int(time.time())
         pixel_tag = (
-            f'<img src="{tracking_url}/pixel?msg_id={msg_id}" '
-            'width="1" height="1" alt="" style="display:none;"/>'
+            f'<img src="{tracking_url}/pixel?msg_id={msg_id}&ts={timestamp}" '
+            'width="1" height="1" alt="" border="0" '
+            'style="display:block; visibility:hidden;"/>'
         )
 
         # b) Build click link
@@ -136,7 +139,11 @@ def render_email_editor() -> None:
 
         # e) Assemble full HTML
         full_html = pixel_tag + html_body + click_tag + unsub_tag + complaint_tag
-
+        # >>> PREVIEW: solo para i==1, muestro el HTML que voy a enviar <<< 
+        if i == 1:
+            st.subheader("📧 HTML Preview (first recipient)")
+            st.code(full_html, language="html")
+            st.markdown("---")
         # f) Send the email
         try:
             sender.send_email(

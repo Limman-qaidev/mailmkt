@@ -81,21 +81,29 @@ class SubscribeRequest(BaseModel):
 
 @app.get("/pixel", response_class=Response,
          summary="Tracking pixel")
-async def pixel(request: Request, msg_id: str) -> Response:
-    """Return a 1×1 transparent GIF and record an 'open' event.
-
-    The ``msg_id`` query parameter identifies the message.  The client IP
-    address is extracted from the request.  The returned response has an
-    image/gif content type.
-    """
+async def pixel(
+        request: Request,
+        msg_id: str,
+        ts: Optional[str] = None  # parámetro anti-cache
+        ) -> Response:
+    """Return a 1×1 GIF, record an 'open', y evitar caching."""
     client_ip = request.client.host if request.client else None
-    print(f"[DEBUG] PIXEL HIT msg_id={msg_id} from {request.client.host}")
+    print(f"[DEBUG] PIXEL HIT msg_id={msg_id} from {client_ip}")
     _record_event(msg_id, "open", client_ip)
-    # A 1×1 transparent GIF encoded in base64
-    gif_base64 = "R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
-    pixel_bytes = base64.b64decode(gif_base64)
-    return Response(content=pixel_bytes, media_type="image/gif")
 
+    # Decode the 1×1 transparent GIF
+    gif_b64 = "R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
+    pixel_bytes = base64.b64decode(gif_b64)
+
+    # Headers to force no-cache
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+    return Response(content=pixel_bytes, media_type="image/gif",
+                    headers=headers)
 
 @app.get("/click", response_class=RedirectResponse,
          summary="Record click via GET and redirect")
