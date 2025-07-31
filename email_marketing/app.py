@@ -72,7 +72,7 @@ def main() -> None:
     """
     # Apply global Streamlit options and custom CSS defined in the style
     # module.
-    st.set_page_config(page_title="Mailmkt Dashboard", layout="wide")
+    st.set_page_config(page_title="Mail watcher Dashboard", layout="wide")
     style.apply_theme()
 
     # Optionally launch the tracking server in the same process.
@@ -84,7 +84,7 @@ def main() -> None:
         _start_tracking_server()
 
     # Sidebar navigation
-    st.sidebar.title("Mailmkt")
+    st.sidebar.title("Mail watcher")
     page = st.sidebar.selectbox("Navigate", ("Email Editor", "Statistics"))
 
     if page == "Email Editor":

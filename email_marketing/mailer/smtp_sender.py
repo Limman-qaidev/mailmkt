@@ -114,19 +114,22 @@ class SMTPSender(EmailSender):
                 CREATE TABLE IF NOT EXISTS email_map (
                     msg_id TEXT PRIMARY KEY,
                     recipient TEXT NOT NULL,
-                    variant TEXT
+                    variant TEXT,
+                    send_ts DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
+            conn.commit()
 
     def _store_mapping(self, msg_id: str,
                        recipient: str,
                        variant: Optional[str]) -> None:
+        """Insert or update the mapping and record the send timestamp."""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO email_map "
-                "(msg_id, recipient, variant) "
-                "VALUES (?, ?, ?)",
+                "(msg_id, recipient, variant, send_ts) "
+                "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
                 (msg_id, recipient, variant),
             )
             conn.commit()
