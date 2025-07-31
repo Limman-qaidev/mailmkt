@@ -21,15 +21,14 @@ from typing import Optional
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr
+from pathlib import Path
 
 
 def _get_db_path() -> str:
-    return os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..",
-        "data",
-        "email_events.db",
-    )
+    # Base dir: .../email_marketing
+    base_dir: Path = Path(__file__).resolve().parent.parent
+    # Events DB in .../email_marketing/data/email_events.db
+    return str(base_dir / "data" / "email_events.db")
 
 
 def _init_db() -> None:

@@ -86,32 +86,31 @@ def render_email_editor() -> None:
     # 5) Determine tracking URL
     # Override tracking URL manually in the UI if needed
     default_tracking_url = os.environ.get("TRACKING_URL", "http://localhost:8000")
-    tracking_url = st.text_input(
+    """tracking_url = st.text_input(
         "Tracking URL",
         value=default_tracking_url,
         help="Enter the public URL where your tracking server is reachable (e.g. ngrok or LAN IP)"
-    ).strip()
+    ).strip()"""
 
     # 6) Debug: show the exact URLs that will be embedded
     sample_id = uuid.uuid4().hex
-    pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
+    """pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
     click_debug = f"{tracking_url}/click?{urllib.parse.urlencode({'msg_id': sample_id, 'url': 'https://example.com'})}"
     unsub_debug = f"{tracking_url}/unsubscribe?msg_id={sample_id}"
-    complaint_debug = f"{tracking_url}/complaint?msg_id={sample_id}"
+    complaint_debug = f"{tracking_url}/complaint?msg_id={sample_id}""""
 
-    st.markdown("### 🔍 Debug: Embedded Tracking URLs")
+    """st.markdown("### 🔍 Debug: Embedded Tracking URLs")
     st.write("**Pixel URL:**", pixel_debug)
     st.write("**Click URL:**", click_debug)
     st.write("**Unsubscribe URL:**", unsub_debug)
-    st.write("**Complaint URL:**", complaint_debug)
+    st.write("**Complaint URL:**", complaint_debug)"""
     st.markdown("---")
 
     # 7) Send emails with progress bar
     total = len(recipients)
     progress = st.progress(0.0)
 
-    # DEBUG: confirm tracking_url in UI
-    st.write("**Using Tracking URL:**", tracking_url)
+
     for i, email in enumerate(recipients, start=1):
         # Assign variant and generate msg_id
         variant = assign_variant(email)

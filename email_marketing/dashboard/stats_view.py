@@ -17,6 +17,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from pathlib import Path
 
 from email_marketing.dashboard import style
 
@@ -25,42 +26,34 @@ def _load_events() -> pd.DataFrame:
     """
     Load engagement events and merge in the recipient email for each msg_id.
     """
-    db_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "data",
-        "email_events.db"
-    )
-    # If no events DB exists yet, return an empty DataFrame with the right
-    # columns
-    if not os.path.exists(db_path):
+    # 1) Construye la ruta al DB de eventos
+    base_dir = Path(__file__).resolve().parent.parent  # .../email_marketing
+    events_db = base_dir / "data" / "email_events.db"
+
+
+    if not events_db.exists():
         return pd.DataFrame(
             columns=["msg_id", "event_type", "client_ip", "ts", "recipient"]
         )
 
-    # 1. Load raw events
-    with sqlite3.connect(db_path) as conn:
+    # 2) Carga los eventos
+    with sqlite3.connect(events_db) as conn:
         df = pd.read_sql_query(
             "SELECT msg_id, event_type, client_ip, ts FROM events", conn
         )
 
-    # 2. Convert timestamp to datetime
     df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
 
-    # 3. Merge in the recipient email from the email_map database
-    map_db_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "data",
-        "email_map.db"
-    )
-    try:
-        with sqlite3.connect(map_db_path) as conn2:
+    # 3) Ahora el mapping de msg_id → recipient
+    map_db = base_dir / "data" / "email_map.db"
+
+    if map_db.exists():
+        with sqlite3.connect(map_db) as conn2:
             df_map = pd.read_sql_query(
                 "SELECT msg_id, recipient FROM email_map", conn2
-                )
-        # Perform a left join so that every event keeps its row,
-        # even if no mapping is found for some msg_id
+            )
         df = df.merge(df_map, on="msg_id", how="left")
-    except Exception:
-        # If the mapping DB is missing or malformed, add an empty recipient
-        # column
+    else:
         df["recipient"] = None
 
     return df
