@@ -110,6 +110,8 @@ def render_email_editor() -> None:
     total = len(recipients)
     progress = st.progress(0.0)
 
+    # DEBUG: confirm tracking_url in UI
+    st.write("**Using Tracking URL:**", tracking_url)
     for i, email in enumerate(recipients, start=1):
         # Assign variant and generate msg_id
         variant = assign_variant(email)

@@ -80,7 +80,8 @@ class SubscribeRequest(BaseModel):
     email: EmailStr
 
 
-@app.get("/pixel", response_class=Response, summary="Tracking pixel")
+@app.get("/pixel", response_class=Response,
+         summary="Tracking pixel")
 async def pixel(request: Request, msg_id: str) -> Response:
     """Return a 1×1 transparent GIF and record an 'open' event.
 
@@ -89,6 +90,7 @@ async def pixel(request: Request, msg_id: str) -> Response:
     image/gif content type.
     """
     client_ip = request.client.host if request.client else None
+    print(f"[DEBUG] PIXEL HIT msg_id={msg_id} from {request.client.host}")
     _record_event(msg_id, "open", client_ip)
     # A 1×1 transparent GIF encoded in base64
     gif_base64 = "R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
@@ -104,6 +106,7 @@ async def click_get(request: Request,
                     ) -> RedirectResponse:
     """Record a click event via GET and redirect to the target URL."""
     client_ip = request.client.host if request.client else None
+    print(f"[DEBUG] CLICK HIT msg_id={msg_id}, redirecting to {url}")
     _record_event(msg_id, "click", client_ip)
     return RedirectResponse(url)
 
@@ -113,6 +116,7 @@ async def click_get(request: Request,
 async def unsubscribe_get(request: Request, msg_id: str) -> PlainTextResponse:
     """Record an unsubscribe event via GET and confirm."""
     client_ip = request.client.host if request.client else None
+    print(f"[DEBUG] UNSUBSCRIBE HIT msg_id={msg_id}")
     _record_event(msg_id, "unsubscribe", client_ip)
     return PlainTextResponse("You have been unsubscribed")
 
@@ -122,6 +126,7 @@ async def unsubscribe_get(request: Request, msg_id: str) -> PlainTextResponse:
 async def complaint_get(request: Request, msg_id: str) -> PlainTextResponse:
     """Record a spam complaint event via GET and confirm."""
     client_ip = request.client.host if request.client else None
+    print(f"[DEBUG] COMPLAINT HIT msg_id={msg_id}")
     _record_event(msg_id, "complaint", client_ip)
     return PlainTextResponse("Thank you, your complaint has been recorded")
 
@@ -153,3 +158,26 @@ def create_app() -> FastAPI:
     module level ``app``.
     """
     return app
+
+
+# --- Click HEAD handler ---
+@app.head("/click", include_in_schema=False)
+async def click_head(request: Request, msg_id: str, url: str) -> Response:
+    client_ip = request.client.host if request.client else None
+    _record_event(msg_id, "click", client_ip)
+    # Devolvemos sólo la cabecera de redirección (301/307) sin cuerpo
+    return Response(status_code=307, headers={"Location": url})
+
+# --- Unsubscribe HEAD handler ---
+@app.head("/unsubscribe", include_in_schema=False)
+async def unsubscribe_head(request: Request, msg_id: str) -> Response:
+    client_ip = request.client.host if request.client else None
+    _record_event(msg_id, "unsubscribe", client_ip)
+    return Response(status_code=200)
+
+# --- Complaint HEAD handler ---
+@app.head("/complaint", include_in_schema=False)
+async def complaint_head(request: Request, msg_id: str) -> Response:
+    client_ip = request.client.host if request.client else None
+    _record_event(msg_id, "complaint", client_ip)
+    return Response(status_code=200)
