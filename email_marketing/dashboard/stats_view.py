@@ -13,6 +13,7 @@ from typing import Dict
 from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -91,13 +92,28 @@ def _compute_metrics(events: pd.DataFrame,
 
 
 def _plot_event_counts(events: pd.DataFrame) -> None:
+    #counts = events["event_type"].value_counts()
+    #fig, ax = plt.subplots()
+    #counts.plot(kind="bar", ax=ax)
+    #ax.set_title("Event Counts")
+    #ax.set_xlabel("Event Type")
+    #ax.set_ylabel("Count")
+    #st.pyplot(fig)
+    """Plot event counts as a responsive Plotly bar chart."""
     counts = events["event_type"].value_counts()
-    fig, ax = plt.subplots()
-    counts.plot(kind="bar", ax=ax)
-    ax.set_title("Event Counts")
-    ax.set_xlabel("Event Type")
-    ax.set_ylabel("Count")
-    st.pyplot(fig)
+    fig = go.Figure(
+        data=[go.Bar(x=counts.index, y=counts.values)],
+        layout=go.Layout(
+                title="Event Counts",
+                xaxis=dict(title="Event Type"),
+                yaxis=dict(title="Count"),
+                autosize=True,
+                margin=dict(l=40, r=40, t=60, b=40),
+                ),
+        )
+    # En Streamlit, use_container_width=True hace que el gráfico ocupe
+    # todo el ancho disponible de forma adaptativa.
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_stats_view() -> None:
@@ -113,6 +129,7 @@ def render_stats_view() -> None:
     refresh_interval = style.get_refresh_interval()
 
     # 2) Inject JavaScript to reload the page every refresh_interval seconds.
+    import streamlit.components.v1 as components
     components.html(
         f"""
         <script>
@@ -125,12 +142,25 @@ def render_stats_view() -> None:
         width=0,
     )
 
-    # 3) Load events and compute metrics
+    # 3) Load events
     events = _load_events()
-    metrics = _compute_metrics(events)
 
-    # 4) Display summary metrics
-    cols = st.columns(4)
+    # 4) Load mapping (msg_id → send_ts) into map_df
+    map_db_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", "data", "email_map.db"
+    )
+    with sqlite3.connect(map_db_path) as conn2:
+        map_df = pd.read_sql_query(
+            "SELECT msg_id, send_ts FROM email_map", conn2,
+            parse_dates=["send_ts"]
+        )
+
+    # 5) Compute metrics
+    metrics = _compute_metrics(events, map_df)
+
+    # 6) Display summary metrics
+    cols = st.columns(5)
     cols[0].metric("Opens", metrics["opens"])
     cols[1].metric("Clicks", metrics["clicks"])
     cols[2].metric("Unsubscribes", metrics["unsubscribes"])

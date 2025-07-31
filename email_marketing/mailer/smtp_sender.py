@@ -109,6 +109,7 @@ class SMTPSender(EmailSender):
     def _init_db(self) -> None:
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         with sqlite3.connect(self._db_path) as conn:
+            # 1) Ensure table exists with send_ts column
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS email_map (
@@ -119,6 +120,13 @@ class SMTPSender(EmailSender):
                 )
                 """
             )
+            # 2) Detect if send_ts column is missing and add it
+            cur = conn.execute("PRAGMA table_info(email_map)")
+            cols = [row[1] for row in cur.fetchall()]
+            if "send_ts" not in cols:
+                conn.execute(
+                    "ALTER TABLE email_map ADD COLUMN send_ts DATETIME"
+                )
             conn.commit()
 
     def _store_mapping(self, msg_id: str,

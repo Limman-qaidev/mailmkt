@@ -8,4 +8,9 @@ thematic configuration.
 
 from __future__ import annotations
 
+from . import email_editor
+from . import stats_view
+from . import style
+
+
 __all__ = ["email_editor", "stats_view", "style"]
