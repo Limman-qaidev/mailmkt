@@ -19,7 +19,7 @@ import uuid
 from typing import Optional
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse, FileResponse
 from pydantic import BaseModel, EmailStr
 from pathlib import Path
 
@@ -88,7 +88,7 @@ async def pixel(
         ) -> Response:
     """Return a 1×1 GIF, record an 'open', y evitar caching."""
     client_ip = request.client.host if request.client else None
-    print(f"[DEBUG] PIXEL HIT msg_id={msg_id} from {client_ip}")
+    #print(f"[DEBUG] PIXEL HIT msg_id={msg_id} from {client_ip}")
     _record_event(msg_id, "open", client_ip)
 
     # Decode the 1×1 transparent GIF
@@ -105,6 +105,16 @@ async def pixel(
     return Response(content=pixel_bytes, media_type="image/gif",
                     headers=headers)
 
+@app.head("/pixel", include_in_schema=False)
+async def pixel_head(request: Request, msg_id: str) -> Response:
+    headers = {
+         "Cache-Control": "no-cache, no-store, must-revalidate",
+         "Pragma":        "no-cache",
+         "Expires":       "0",
+         "Content-Type":  "image/gif",
+     }
+    return Response(status_code=200, headers=headers)
+
 @app.get("/click", response_class=RedirectResponse,
          summary="Record click via GET and redirect")
 async def click_get(request: Request,
@@ -113,7 +123,7 @@ async def click_get(request: Request,
                     ) -> RedirectResponse:
     """Record a click event via GET and redirect to the target URL."""
     client_ip = request.client.host if request.client else None
-    print(f"[DEBUG] CLICK HIT msg_id={msg_id}, redirecting to {url}")
+    #print(f"[DEBUG] CLICK HIT msg_id={msg_id}, redirecting to {url}")
     _record_event(msg_id, "click", client_ip)
     return RedirectResponse(url)
 
@@ -123,7 +133,7 @@ async def click_get(request: Request,
 async def unsubscribe_get(request: Request, msg_id: str) -> PlainTextResponse:
     """Record an unsubscribe event via GET and confirm."""
     client_ip = request.client.host if request.client else None
-    print(f"[DEBUG] UNSUBSCRIBE HIT msg_id={msg_id}")
+    #print(f"[DEBUG] UNSUBSCRIBE HIT msg_id={msg_id}")
     _record_event(msg_id, "unsubscribe", client_ip)
     return PlainTextResponse("You have been unsubscribed")
 
@@ -133,10 +143,60 @@ async def unsubscribe_get(request: Request, msg_id: str) -> PlainTextResponse:
 async def complaint_get(request: Request, msg_id: str) -> PlainTextResponse:
     """Record a spam complaint event via GET and confirm."""
     client_ip = request.client.host if request.client else None
-    print(f"[DEBUG] COMPLAINT HIT msg_id={msg_id}")
+    #print(f"[DEBUG] COMPLAINT HIT msg_id={msg_id}")
     _record_event(msg_id, "complaint", client_ip)
     return PlainTextResponse("Thank you, your complaint has been recorded")
 
+@app.get(
+    "/logo",
+    summary="Serve corporate logo and record open",
+    response_class=FileResponse,
+)
+async def logo(request: Request,
+               msg_id: str,
+               ts: Optional[str] = None) -> FileResponse:
+    """
+    Serve the corporate logo PNG and record an 'open' event.
+    Query params:
+    - msg_id: identifier of the message
+    - ts: timestamp to bust proxy cache
+    """
+    client_ip = request.client.host if request.client else None
+    print(f"[DEBUG] LOGO HIT msg_id={msg_id} from {client_ip}")
+    _record_event(msg_id, "open", client_ip)
+
+    # Location of the static logo file
+    logo_path = Path(__file__).resolve().parent / "static" / "corporate_logo.png"
+    # Headers to prevent caching
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+    return FileResponse(path=logo_path, media_type="image/png",
+                        headers=headers)
+
+# HEAD handler para el logo, para que Gmail proxy valide correctamente
+@app.head("/logo", include_in_schema=False)
+async def logo_head(request: Request,
+                    msg_id: str,
+                    ts: Optional[str] = None) -> Response:
+    """
+    Respond to HEAD so proxies (Gmail, Outlook) puedan validar la imagen.
+    También grabamos el 'open' aquí.
+    """
+    #client_ip = request.client.host if request.client else None
+    print(f"[DEBUG] LOGO HEAD HIT msg_id={msg_id}")
+    #_record_event(msg_id, "open", client_ip)
+
+    # Solo devolvemos cabeceras, sin cuerpo, con Content-Type + anti-cache
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma":        "no-cache",
+        "Expires":       "0",
+        "Content-Type":  "image/png",
+    }
+    return Response(status_code=200, headers=headers)
 
 @app.post("/subscribe", response_class=PlainTextResponse,
           summary="Request double opt-in")

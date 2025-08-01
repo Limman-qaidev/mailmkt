@@ -86,12 +86,15 @@ def render_email_editor() -> None:
 
     # 5) Determine tracking URL
     # Override tracking URL manually in the UI if needed
-    tracking_url = os.environ.get("TRACKING_URL", "http://localhost:8000")
-    """tracking_url = st.text_input(
+    default_tracking_url = os.environ.get(
+        "TRACKING_URL",
+        "https://track.jonathansalgadonieto.com"
+        )
+    tracking_url = st.text_input(
         "Tracking URL",
         value=default_tracking_url,
-        help="Enter the public URL where your tracking server is reachable (e.g. ngrok or LAN IP)"
-    ).strip()"""
+        help="URL pública de tu servidor de tracking"
+    ).strip()
 
     # 6) Debug: show the exact URLs that will be embedded
     sample_id = uuid.uuid4().hex
@@ -124,6 +127,10 @@ def render_email_editor() -> None:
             'width="1" height="1" alt="" border="0" '
             'style="display:block; visibility:hidden;"/>'
         )
+        logo_tag = (
+            f'<p><img src="{tracking_url}/logo?msg_id={msg_id}&ts={timestamp}" '
+            'alt="Company Logo" width="200"/></p>'
+        )
 
         # b) Build click link
         click_qs = urllib.parse.urlencode({"msg_id": msg_id, "url": "https://example.com"})
@@ -138,7 +145,18 @@ def render_email_editor() -> None:
         complaint_tag = f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam</a></p>'
 
         # e) Assemble full HTML
-        full_html = pixel_tag + html_body + click_tag + unsub_tag + complaint_tag
+        full_html = f"""<!DOCTYPE html>
+                    <html>
+                    <head><meta charset="utf-8"></head>
+                    <body>
+                        {logo_tag}
+                        {html_body}
+                        {click_tag}
+                        {unsub_tag}
+                        {complaint_tag}
+                    </body>
+                    </html>
+                    """
         # >>> PREVIEW: solo para i==1, muestro el HTML que voy a enviar <<< 
         if i == 1:
             st.subheader("📧 HTML Preview (first recipient)")

@@ -183,10 +183,6 @@ class SMTPSender(EmailSender):
                     smtp.ehlo()
                 if self._username and self._password:
                     smtp.login(self._username, self._password)
-
-                # <<< DEBUG: muestra el HTML completo antes de enviarlo >>>
-                if os.environ.get("SMTP_DEBUG", "").lower() in ("1", "true", "yes"):
-                    print(f"\n[SMTP DEBUG] OUTGOING HTML for msg_id={msg_id}:\n{html}\n")
                 smtp.send_message(msg)
         except Exception as exc:
             raise RuntimeError(

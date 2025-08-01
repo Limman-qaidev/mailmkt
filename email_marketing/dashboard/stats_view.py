@@ -63,10 +63,21 @@ def _compute_metrics(events: pd.DataFrame,
                      map_df: pd.DataFrame
                      ) -> Dict[str, int]:
     counts = {
-        "opens":   int((events["event_type"] == "open").sum()),
-        "clicks":  int((events["event_type"] == "click").sum()),
-        "unsubscribes": int((events["event_type"] == "unsubscribe").sum()),
-        "complaints":   int((events["event_type"] == "complaint").sum()),
+        "opens":   int(
+            events.loc[events["event_type"] == "open", "msg_id"].nunique()
+            ),
+        "clicks":  int(
+            events.loc[events["event_type"] == "click", "msg_id"].nunique()
+            ),
+        "unsubscribes": int(
+            events.loc[
+                events["event_type"] == "unsubscribe",
+                "msg_id"
+                ].nunique()
+            ),
+        "complaints":   int(
+            events.loc[events["event_type"] == "complaint", "msg_id"].nunique()
+            ),
     }
 
     # Merge events with send timestamps
