@@ -17,7 +17,7 @@ import os
 import urllib.parse
 import time
 
-from email_marketing.mailer.mailgun_sender import MailgunSender  # type: ignore
+from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
 from email_marketing.ab_testing import assign_variant
 
@@ -70,7 +70,9 @@ def render_email_editor() -> None:
 
     # 3) Choose sender
     sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
-    send_button = st.button("Send Email", disabled=not recipients or not html_body)
+    send_button = st.button(
+        "Send Email", disabled=not recipients or not html_body
+        )
     if not send_button:
         return
 
@@ -97,9 +99,10 @@ def render_email_editor() -> None:
     ).strip()
 
     # 6) Debug: show the exact URLs that will be embedded
-    sample_id = uuid.uuid4().hex
+    # sample_id = uuid.uuid4().hex
     # pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
-    # click_debug = f"{tracking_url}/click?{urllib.parse.urlencode({'msg_id': sample_id, 'url': 'https://example.com'})}"
+    # click_debug = f"{tracking_url}/click?{urllib.parse.urlencode(
+    # {'msg_id': sample_id, 'url': 'https://example.com'})}"
     # unsub_debug = f"{tracking_url}/unsubscribe?msg_id={sample_id}"
     # complaint_debug = f"{tracking_url}/complaint?msg_id={sample_id}"
 
@@ -114,7 +117,6 @@ def render_email_editor() -> None:
     total = len(recipients)
     progress = st.progress(0.0)
 
-
     for i, email in enumerate(recipients, start=1):
         # Assign variant and generate msg_id
         variant = assign_variant(email)
@@ -122,28 +124,37 @@ def render_email_editor() -> None:
 
         # a) Build open-pixel tag
         timestamp = int(time.time())
-        pixel_tag = (
-            f'<img src="{tracking_url}/pixel?msg_id={msg_id}&ts={timestamp}" '
-            'width="1" height="1" alt="" border="0" '
-            'style="display:block; visibility:hidden;"/>'
-        )
+        # pixel_tag = (
+        #    f'<img src="{tracking_url}/pixel?msg_id={msg_id}&ts={timestamp}" '
+        #    'width="1" height="1" alt="" border="0" '
+        #    'style="display:block; visibility:hidden;"/>'
+        # )
         logo_tag = (
-            f'<p><img src="{tracking_url}/logo?msg_id={msg_id}&ts={timestamp}" '
-            'alt="Company Logo" width="200"/></p>'
+            f'<p><img src="{tracking_url}/logo?msg_id={msg_id}&ts={timestamp}"'
+            ' alt="Company Logo" width="200"/></p>'
         )
 
         # b) Build click link
-        click_qs = urllib.parse.urlencode({"msg_id": msg_id, "url": "https://example.com"})
-        click_tag = f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
+        click_qs = urllib.parse.urlencode(
+            {"msg_id": msg_id, "url": "https://example.com"}
+            )
+        click_tag = (
+            f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
+        )
 
         # c) Build unsubscribe link
         unsub_qs = urllib.parse.urlencode({"msg_id": msg_id})
-        unsub_tag = f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a></p>'
+        unsub_tag = (
+            f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}"'
+            '>Unsubscribe</a></p>'
+        )
 
         # d) Build complaint link
         comp_qs = urllib.parse.urlencode({"msg_id": msg_id})
-        complaint_tag = f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam</a></p>'
-
+        complaint_tag = (
+            f'<p><a href="{tracking_url}/complaint?{comp_qs}"'
+            '>Report spam</a></p>'
+        )
         # e) Assemble full HTML
         full_html = f"""<!DOCTYPE html>
                     <html>
@@ -157,7 +168,7 @@ def render_email_editor() -> None:
                     </body>
                     </html>
                     """
-        # >>> PREVIEW: solo para i==1, muestro el HTML que voy a enviar <<< 
+        # >>> PREVIEW: solo para i==1, muestro el HTML que voy a enviar <<<
         if i == 1:
             st.subheader("📧 HTML Preview (first recipient)")
             st.code(full_html, language="html")

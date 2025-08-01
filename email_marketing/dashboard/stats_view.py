@@ -12,7 +12,7 @@ import sqlite3
 from typing import Dict
 from datetime import datetime, timedelta
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import pandas as pd
 import streamlit as st
@@ -29,7 +29,6 @@ def _load_events() -> pd.DataFrame:
     # 1) Construye la ruta al DB de eventos
     base_dir = Path(__file__).resolve().parent.parent  # .../email_marketing
     events_db = base_dir / "data" / "email_events.db"
-
 
     if not events_db.exists():
         return pd.DataFrame(
@@ -86,7 +85,7 @@ def _compute_metrics(events: pd.DataFrame,
         on="msg_id", how="left", indicator=True
     )
     now = datetime.utcnow()
-    threshold = now - timedelta(days=7)
+    threshold = now - timedelta(days=1)
     # Count msg_id with no events (_merge == "left_only") AND send_ts older
     #  than threshold
     stale = df.query("_merge == 'left_only' and send_ts < @threshold")
@@ -96,13 +95,13 @@ def _compute_metrics(events: pd.DataFrame,
 
 
 def _plot_event_counts(events: pd.DataFrame) -> None:
-    #counts = events["event_type"].value_counts()
-    #fig, ax = plt.subplots()
-    #counts.plot(kind="bar", ax=ax)
-    #ax.set_title("Event Counts")
-    #ax.set_xlabel("Event Type")
-    #ax.set_ylabel("Count")
-    #st.pyplot(fig)
+    # counts = events["event_type"].value_counts()
+    # fig, ax = plt.subplots()
+    # counts.plot(kind="bar", ax=ax)
+    # ax.set_title("Event Counts")
+    # ax.set_xlabel("Event Type")
+    # ax.set_ylabel("Count")
+    # st.pyplot(fig)
     """Plot event counts as a responsive Plotly bar chart."""
     counts = events["event_type"].value_counts()
     fig = go.Figure(
@@ -133,7 +132,6 @@ def render_stats_view() -> None:
     refresh_interval = style.get_refresh_interval()
 
     # 2) Inject JavaScript to reload the page every refresh_interval seconds.
-    import streamlit.components.v1 as components
     components.html(
         f"""
         <script>
