@@ -163,9 +163,9 @@ async def logo(request: Request,
     """
     client_ip = request.client.host if request.client else None
     print(f"[DEBUG] LOGO HIT msg_id={msg_id} from {client_ip}")
-    _record_event(msg_id, "open", client_ip)
+    _#r_ecord_event(msg_id, "open", client_ip)
 
-    # Location of the static logo file
+     L#ocation of the static logo file
     logo_path = Path(__file__).resolve().parent / "static" / "corporate_logo.png"
     # Headers to prevent caching
     headers = {
