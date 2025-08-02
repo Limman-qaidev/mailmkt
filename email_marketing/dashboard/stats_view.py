@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import Dict
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict
+
+import pandas as pd
 
 # import matplotlib.pyplot as plt
 import plotly.express as px
-import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from pathlib import Path
 
 from email_marketing.dashboard import style
 
@@ -32,13 +33,13 @@ def _load_events() -> pd.DataFrame:
 
     if not events_db.exists():
         return pd.DataFrame(
-            columns=["msg_id", "event_type", "client_ip", "ts", "recipient"]
+            columns=["msg_id", "event_type", "client_ip", "ts", "recipient", "campaign"]
         )
 
     # 2) Carga los eventos
     with sqlite3.connect(events_db) as conn:
         df = pd.read_sql_query(
-            "SELECT msg_id, event_type, client_ip, ts FROM events", conn
+            "SELECT msg_id, event_type, client_ip, ts, campaign FROM events", conn
         )
 
     df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
@@ -48,9 +49,7 @@ def _load_events() -> pd.DataFrame:
 
     if map_db.exists():
         with sqlite3.connect(map_db) as conn2:
-            df_map = pd.read_sql_query(
-                "SELECT msg_id, recipient FROM email_map", conn2
-            )
+            df_map = pd.read_sql_query("SELECT msg_id, recipient FROM email_map", conn2)
         df = df.merge(df_map, on="msg_id", how="left")
     else:
         df["recipient"] = None
@@ -86,38 +85,21 @@ def _compute_metrics(
         }
     """
     # 1) Drop duplicate (msg_id, event_type) pairs
-    deduped: pd.DataFrame = events.drop_duplicates(
-        subset=["msg_id", "event_type"]
-    )
+    deduped: pd.DataFrame = events.drop_duplicates(subset=["msg_id", "event_type"])
 
     # 2) Count unique msg_id by event_type
     counts: Dict[str, int] = {
-        "opens": int(
-            deduped.loc[deduped["event_type"] == "open", "msg_id"]
-            .nunique()
-        ),
-        "clicks": int(
-            deduped.loc[deduped["event_type"] == "click", "msg_id"]
-            .nunique()
-        ),
+        "opens": int(deduped.loc[deduped["event_type"] == "open", "msg_id"].nunique()),
+        "clicks": int(deduped.loc[deduped["event_type"] == "click", "msg_id"].nunique()),
         "unsubscribes": int(
-            deduped.loc[
-                deduped["event_type"] == "unsubscribe", "msg_id"
-            ].nunique()
+            deduped.loc[deduped["event_type"] == "unsubscribe", "msg_id"].nunique()
         ),
-        "complaints": int(
-            deduped.loc[
-                deduped["event_type"] == "complaint", "msg_id"
-            ].nunique()
-        ),
+        "complaints": int(deduped.loc[deduped["event_type"] == "complaint", "msg_id"].nunique()),
     }
 
     # 3) Merge send_log with deduped to identify messages without events
     merged: pd.DataFrame = send_log[["msg_id", "send_ts"]].merge(
-        deduped[["msg_id"]].drop_duplicates(),
-        on="msg_id",
-        how="left",
-        indicator=True
+        deduped[["msg_id"]].drop_duplicates(), on="msg_id", how="left", indicator=True
     )
 
     # 4) Define time threshold (7 days ago)
@@ -125,10 +107,7 @@ def _compute_metrics(
     threshold: datetime = now - timedelta(days=7)
 
     # 5) Identify messages with no events and sent before threshold
-    no_event_mask: pd.Series = (
-        (merged["_merge"] == "left_only")
-        & (merged["send_ts"] < threshold)
-    )
+    no_event_mask: pd.Series = (merged["_merge"] == "left_only") & (merged["send_ts"] < threshold)
     stale_messages: pd.DataFrame = merged.loc[no_event_mask]
 
     counts["deleted_or_spam"] = len(stale_messages)
@@ -146,10 +125,13 @@ def _plot_event_counts(events: pd.DataFrame) -> None:
     # st.pyplot(fig)
     """Plot event counts as a responsive Plotly bar chart."""
     events = events.drop_duplicates(subset=["msg_id", "event_type"])
-    counts = events.groupby('event_type')['msg_id'].nunique()
-    fig = px.bar(x=counts.index, y=counts.values,
-                 labels={'x': 'Event type', 'y': 'Unique messages'},
-                 title='Number of messages per event type')
+    counts = events.groupby("event_type")["msg_id"].nunique()
+    fig = px.bar(
+        x=counts.index,
+        y=counts.values,
+        labels={"x": "Event type", "y": "Unique messages"},
+        title="Number of messages per event type",
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -183,13 +165,11 @@ def render_stats_view() -> None:
 
     # 4) Load mapping (msg_id → send_ts) into map_df
     map_db_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "data", "email_map.db"
+        os.path.dirname(os.path.abspath(__file__)), "..", "data", "email_map.db"
     )
     with sqlite3.connect(map_db_path) as conn2:
         map_df = pd.read_sql_query(
-            "SELECT msg_id, send_ts FROM email_map", conn2,
-            parse_dates=["send_ts"]
+            "SELECT msg_id, send_ts FROM email_map", conn2, parse_dates=["send_ts"]
         )
 
     # 5) Compute metrics
@@ -207,10 +187,6 @@ def render_stats_view() -> None:
     if not events.empty:
         _plot_event_counts(events)
         st.subheader("Recent Events")
-        st.dataframe(
-            events.sort_values(by="ts", ascending=False),
-            width=3000,
-            height=400
-        )
+        st.dataframe(events.sort_values(by="ts", ascending=False), width=3000, height=400)
     else:
         st.info("No events recorded yet.")

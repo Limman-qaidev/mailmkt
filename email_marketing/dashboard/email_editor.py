@@ -8,19 +8,20 @@ format and are displayed back to the user for verification.
 
 from __future__ import annotations
 
+import os
+import time
+import urllib.parse
 import uuid
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
 import pandas as pd
 import streamlit as st
-import os
-import urllib.parse
-import time
+
+from email_marketing.ab_testing import assign_variant
 
 # Uncomment if needed add MailgunSender
 # from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
-from email_marketing.ab_testing import assign_variant
 
 
 def _load_recipients(upload: Optional[Any]) -> List[str]:
@@ -73,9 +74,7 @@ def render_email_editor() -> None:
     # 3) Choose sender
     # Uncomment if needed adding MailgunSender
     # sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
-    send_button = st.button(
-        "Send Email", disabled=not recipients or not html_body
-        )
+    send_button = st.button("Send Email", disabled=not recipients or not html_body)
     if not send_button:
         return
 
@@ -93,10 +92,7 @@ def render_email_editor() -> None:
 
     # 5) Determine tracking URL
     # Override tracking URL manually in the UI if needed
-    default_tracking_url = os.environ.get(
-        "TRACKING_URL",
-        "https://track.jonathansalgadonieto.com"
-        )
+    default_tracking_url = os.environ.get("TRACKING_URL", "https://track.jonathansalgadonieto.com")
     # tracking_url = st.text_input(
     #     "Tracking URL",
     #     value=default_tracking_url,
@@ -129,37 +125,24 @@ def render_email_editor() -> None:
 
         # a) Build open-pixel tag
         timestamp = int(time.time())
-        # pixel_tag = (
-        #    f'<img src="{tracking_url}/pixel?msg_id={msg_id}&ts={timestamp}" '
-        #    'width="1" height="1" alt="" border="0" '
-        #    'style="display:block; visibility:hidden;"/>'
-        # )
+        logo_qs = urllib.parse.urlencode({"msg_id": msg_id, "ts": timestamp, "campaign": subject})
         logo_tag = (
-            f'<p><img src="{tracking_url}/logo?msg_id={msg_id}&ts={timestamp}"'
-            ' alt="Company Logo" width="200"/></p>'
+            f'<p><img src="{tracking_url}/logo?{logo_qs}" alt="Company Logo" width="200"/></p>'
         )
 
         # b) Build click link
         click_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id, "url": "https://example.com"}
-            )
-        click_tag = (
-            f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
+            {"msg_id": msg_id, "url": "https://example.com", "campaign": subject}
         )
+        click_tag = f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
 
         # c) Build unsubscribe link
-        unsub_qs = urllib.parse.urlencode({"msg_id": msg_id})
-        unsub_tag = (
-            f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}"'
-            '>Unsubscribe</a></p>'
-        )
+        unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject})
+        unsub_tag = f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a></p>'
 
         # d) Build complaint link
-        comp_qs = urllib.parse.urlencode({"msg_id": msg_id})
-        complaint_tag = (
-            f'<p><a href="{tracking_url}/complaint?{comp_qs}"'
-            '>Report spam</a></p>'
-        )
+        comp_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject})
+        complaint_tag = f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam</a></p>'
         # e) Assemble full HTML
         full_html = f"""<!DOCTYPE html>
                     <html>
