@@ -71,16 +71,7 @@ def _record_event(msg_id: str,
                   ) -> None:
     """Insert a new event into the SQLite database."""
     with sqlite3.connect(_get_db_path()) as conn:
-        if event_type == "open":
-            cur = conn.execute("SELECT COUNT(*) FROM events WHERE msg_id = ?",
-                               (msg_id,))
-            count = cur.fetchone()[0]
-            if count == 0:
-                event_type_to_store = "send"
-            else:
-                event_type_to_store = "open"
-        else:
-            event_type_to_store = event_type
+
         conn.execute(
             """
             INSERT INTO events
@@ -89,11 +80,11 @@ def _record_event(msg_id: str,
             """,
             (
                 msg_id,
-                event_type_to_store,
+                event_type,
                 client_ip,
                 dt.datetime.utcnow().isoformat(),
                 campaign,
-            )
+            ),
         )
         conn.commit()
 
@@ -125,9 +116,8 @@ async def pixel(
         ts: Optional[str] = None  # parámetro anti-cache
         ) -> Response:
     """Return a 1×1 GIF, record an 'open', y evitar caching."""
-    # client_ip = request.client.host if request.client else None
-    # print(f"[DEBUG] PIXEL HIT msg_id={msg_id} from {client_ip}")
-    # _record_event(msg_id, "open", client_ip)
+    client_ip = request.client.host if request.client else None
+    _record_event(msg_id, "open", client_ip, campaign)
 
     # Decode the 1×1 transparent GIF
     gif_b64 = "R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
@@ -151,40 +141,44 @@ async def pixel_head(request: Request, msg_id: str) -> Response:
          "Pragma":        "no-cache",
          "Expires":       "0",
          "Content-Type":  "image/gif",
-     }
+    }
     return Response(status_code=200, headers=headers)
 
 
 @app.get("/click", response_class=RedirectResponse,
          summary="Record click via GET and redirect")
-async def click_get(request: Request,
-                    msg_id: str,
-                    url: str
-                    ) -> RedirectResponse:
+async def click_get(
+    request: Request,
+    msg_id: str,
+    url: str,
+    campaign: Optional[str] = None,
+) -> RedirectResponse:
     """Record a click event via GET and redirect to the target URL."""
     client_ip = request.client.host if request.client else None
-    # print(f"[DEBUG] CLICK HIT msg_id={msg_id}, redirecting to {url}")
-    _record_event(msg_id, "click", client_ip, None)
+    _record_event(msg_id, "click", client_ip, campaign)
     return RedirectResponse(url)
 
 
 @app.get("/unsubscribe", response_class=PlainTextResponse,
          summary="Handle unsubscribe via GET")
-async def unsubscribe_get(request: Request, msg_id: str) -> PlainTextResponse:
+async def unsubscribe_get(
+    request: Request, msg_id: str, campaign: Optional[str] = None
+) -> PlainTextResponse:
     """Record an unsubscribe event via GET and confirm."""
     client_ip = request.client.host if request.client else None
-    # print(f"[DEBUG] UNSUBSCRIBE HIT msg_id={msg_id}")
-    _record_event(msg_id, "unsubscribe", client_ip, None)
+    _record_event(msg_id, "unsubscribe", client_ip, campaign)
     return PlainTextResponse("You have been unsubscribed")
 
 
 @app.get("/complaint", response_class=PlainTextResponse,
          summary="Handle complaint via GET")
-async def complaint_get(request: Request, msg_id: str) -> PlainTextResponse:
+async def complaint_get(
+    request: Request, msg_id: str, campaign: Optional[str] = None
+) -> PlainTextResponse:
     """Record a spam complaint event via GET and confirm."""
     client_ip = request.client.host if request.client else None
     # print(f"[DEBUG] COMPLAINT HIT msg_id={msg_id}")
-    _record_event(msg_id, "complaint", client_ip, None)
+    _record_event(msg_id, "complaint", client_ip, campaign)
     return PlainTextResponse("Thank you, your complaint has been recorded")
 
 
@@ -193,9 +187,12 @@ async def complaint_get(request: Request, msg_id: str) -> PlainTextResponse:
     summary="Serve corporate logo and record open",
     response_class=FileResponse,
 )
-async def logo(request: Request,
-               msg_id: str,
-               ts: Optional[str] = None) -> FileResponse:
+async def logo(
+    request: Request,
+    msg_id: str,
+    ts: Optional[str] = None,
+    campaign: Optional[str] = None
+) -> FileResponse:
     """
     Serve the corporate logo PNG and record an 'open' event.
     Query params:
@@ -203,7 +200,7 @@ async def logo(request: Request,
     - ts: timestamp to bust proxy cache
     """
     client_ip = request.client.host if request.client else None
-    print(f"[DEBUG] LOGO HIT msg_id={msg_id} from {client_ip}")
+    _record_event(msg_id, "open", client_ip, campaign)
     # Location of the static logo file
     logo_path = Path(__file__).resolve().parent / "static" / "logo.png"
     headers = {
@@ -231,9 +228,9 @@ async def logo_head(request: Request,
     # Solo devolvemos cabeceras, sin cuerpo, con Content-Type + anti-cache
     headers = {
         "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma":        "no-cache",
-        "Expires":       "0",
-        "Content-Type":  "image/png",
+        "Pragma": "no-cache",
+        "Expires": "0",
+        "Content-Type": "image/png",
     }
     return Response(status_code=200, headers=headers)
 
@@ -269,24 +266,32 @@ def create_app() -> FastAPI:
 
 # --- Click HEAD handler ---
 @app.head("/click", include_in_schema=False)
-async def click_head(request: Request, msg_id: str, url: str) -> Response:
+async def click_head(
+    request: Request, msg_id: str, url: str, campaign: Optional[str] = None
+) -> Response:
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "click", client_ip, None)
+    _record_event(msg_id, "click", client_ip, campaign)
     # Devolvemos sólo la cabecera de redirección (301/307) sin cuerpo
     return Response(status_code=307, headers={"Location": url})
 
 
 # --- Unsubscribe HEAD handler ---
-@app.head("/unsubscribe", include_in_schema=False)
-async def unsubscribe_head(request: Request, msg_id: str) -> Response:
+async def unsubscribe_head(
+    request: Request, msg_id: str, campaign: Optional[str] = None
+) -> Response:
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "unsubscribe", client_ip, None)
+    _record_event(msg_id, "unsubscribe", client_ip, campaign)
     return Response(status_code=200)
 
 
 # --- Complaint HEAD handler ---
 @app.head("/complaint", include_in_schema=False)
-async def complaint_head(request: Request, msg_id: str) -> Response:
+async def complaint_head(
+    request: Request,
+    msg_id: str,
+    campaign: Optional[str] = None
+
+) -> Response:
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "complaint", client_ip, None)
+    _record_event(msg_id, "complaint", client_ip, campaign)
     return Response(status_code=200)

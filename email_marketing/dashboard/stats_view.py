@@ -32,13 +32,15 @@ def _load_events() -> pd.DataFrame:
 
     if not events_db.exists():
         return pd.DataFrame(
-            columns=["msg_id", "event_type", "client_ip", "ts", "recipient"]
+            columns=["msg_id", "event_type", "client_ip",
+                     "ts", "recipient", "campaign"]
         )
 
     # 2) Carga los eventos
     with sqlite3.connect(events_db) as conn:
         df = pd.read_sql_query(
-            "SELECT msg_id, event_type, client_ip, ts FROM events", conn
+            "SELECT msg_id, event_type, client_ip, ts, campaign FROM events",
+            conn
         )
 
     df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
@@ -49,8 +51,9 @@ def _load_events() -> pd.DataFrame:
     if map_db.exists():
         with sqlite3.connect(map_db) as conn2:
             df_map = pd.read_sql_query(
-                "SELECT msg_id, recipient FROM email_map", conn2
-            )
+                "SELECT msg_id, recipient FROM email_map",
+                conn2
+                )
         df = df.merge(df_map, on="msg_id", how="left")
     else:
         df["recipient"] = None
@@ -146,10 +149,13 @@ def _plot_event_counts(events: pd.DataFrame) -> None:
     # st.pyplot(fig)
     """Plot event counts as a responsive Plotly bar chart."""
     events = events.drop_duplicates(subset=["msg_id", "event_type"])
-    counts = events.groupby('event_type')['msg_id'].nunique()
-    fig = px.bar(x=counts.index, y=counts.values,
-                 labels={'x': 'Event type', 'y': 'Unique messages'},
-                 title='Number of messages per event type')
+    counts = events.groupby("event_type")["msg_id"].nunique()
+    fig = px.bar(
+        x=counts.index,
+        y=counts.values,
+        labels={"x": "Event type", "y": "Unique messages"},
+        title="Number of messages per event type",
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 

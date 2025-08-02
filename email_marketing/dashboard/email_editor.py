@@ -134,31 +134,43 @@ def render_email_editor() -> None:
         #    'width="1" height="1" alt="" border="0" '
         #    'style="display:block; visibility:hidden;"/>'
         # )
+        logo_qs = urllib.parse.urlencode(
+            {"msg_id": msg_id,
+             "ts": timestamp,
+             "campaign": subject}
+             )
         logo_tag = (
-            f'<p><img src="{tracking_url}/logo?msg_id={msg_id}&ts={timestamp}"'
-            ' alt="Company Logo" width="200"/></p>'
+            f'<p><img src="{tracking_url}/logo?{logo_qs}" '
+            'alt="Company Logo" width="200"/></p>'
         )
 
         # b) Build click link
         click_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id, "url": "https://example.com"}
+            {"msg_id": msg_id, "url": "https://example.com",
+             "campaign": subject}
             )
         click_tag = (
             f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
         )
 
         # c) Build unsubscribe link
-        unsub_qs = urllib.parse.urlencode({"msg_id": msg_id})
+        unsub_qs = urllib.parse.urlencode(
+            {"msg_id": msg_id,
+             "campaign": subject}
+             )
         unsub_tag = (
-            f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}"'
-            '>Unsubscribe</a></p>'
+            f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe'
+            '</a></p>'
         )
 
         # d) Build complaint link
-        comp_qs = urllib.parse.urlencode({"msg_id": msg_id})
+        comp_qs = urllib.parse.urlencode(
+            {"msg_id": msg_id,
+             "campaign": subject}
+             )
         complaint_tag = (
-            f'<p><a href="{tracking_url}/complaint?{comp_qs}"'
-            '>Report spam</a></p>'
+            f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam'
+            '</a></p>'
         )
         # e) Assemble full HTML
         full_html = f"""<!DOCTYPE html>
