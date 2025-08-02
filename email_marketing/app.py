@@ -17,12 +17,19 @@ import sys
 import threading
 import streamlit as st
 
+from fastapi import FastAPI
+import uvicorn
+
+
 # Ensure project root is on PYTHONPATH so imports like
 # `email_marketing.dashboard` work
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, root_dir)
 
-from email_marketing.dashboard import email_editor, stats_view, style
+try:
+    from email_marketing.dashboard import email_editor, stats_view, style
+except ImportError:
+    raise ImportError("Failed to import dashboard modules")
 
 try:
     # Attempt to import the tracking server.  This import is optional;
@@ -47,22 +54,41 @@ def _start_tracking_server() -> None:
     if tracking_server is None:
         return
 
-    def run() -> None:
-        # FastAPI apps expose ``app``; Flask apps expose ``create_app``.
+    if (
+        os.getenv("RUN_TRACKING_WITH_STREAMLIT", "").lower() not in {
+            "1", "true", "yes"
+        }
+    ):
+        return
+
+    def _run_server() -> None:
+        # Determine which attribute to use
         if hasattr(tracking_server, "app"):
-            import uvicorn  # type: ignore
-
-            uvicorn.run(
-                tracking_server.app, host="0.0.0.0", port=8000,
-                log_level="info"
-            )
+            app_instance: FastAPI = tracking_server.app
         elif hasattr(tracking_server, "create_app"):
-            app = tracking_server.create_app()
-            app.run(host="0.0.0.0", port=8000)
+            app_instance = tracking_server.create_app()
         else:
-            raise RuntimeError("Unsupported tracking server implementation")
+            raise RuntimeError("Unsupported tracking_server implementation")
 
-    thread = threading.Thread(target=run, name="tracking-server", daemon=True)
+        # Ensure it's actually FastAPI
+        if not isinstance(app_instance, FastAPI):
+            raise RuntimeError(
+                f"Expected FastAPI instance, got {type(app_instance)}"
+                )
+
+        # Start Uvicorn
+        uvicorn.run(
+            app_instance,
+            host="0.0.0.0",
+            port=8000,
+            log_level="info",
+        )
+
+    thread = threading.Thread(
+        target=_run_server,
+        name="tracking-server",
+        daemon=True,
+    )
     thread.start()
 
 

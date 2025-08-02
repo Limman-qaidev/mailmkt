@@ -13,7 +13,7 @@ from typing import Dict
 from datetime import datetime, timedelta
 
 # import matplotlib.pyplot as plt
-import plotly.graph_objects as go
+import plotly.express as px
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -58,38 +58,80 @@ def _load_events() -> pd.DataFrame:
     return df
 
 
-def _compute_metrics(events: pd.DataFrame,
-                     map_df: pd.DataFrame
-                     ) -> Dict[str, int]:
-    counts = {
-        "opens":   int(
-            events.loc[events["event_type"] == "open", "msg_id"].nunique()
-            ),
-        "clicks":  int(
-            events.loc[events["event_type"] == "click", "msg_id"].nunique()
-            ),
+def _compute_metrics(
+    events: pd.DataFrame,
+    send_log: pd.DataFrame,
+) -> Dict[str, int]:
+    """
+    Calculate per-message metrics over the last 7 days:
+      - number of unique opens, clicks, unsubscribes, and complaints
+      - number of messages sent >7 days ago with no recorded events
+
+    Parameters
+    ----------
+    events : pd.DataFrame
+        DataFrame with columns ["msg_id", "event_type", ...]
+    send_log : pd.DataFrame
+        DataFrame with columns ["msg_id", "send_ts", ...]
+
+    Returns
+    -------
+    Dict[str, int]
+        {
+            "opens": int,
+            "clicks": int,
+            "unsubscribes": int,
+            "complaints": int,
+            "deleted_or_spam": int
+        }
+    """
+    # 1) Drop duplicate (msg_id, event_type) pairs
+    deduped: pd.DataFrame = events.drop_duplicates(
+        subset=["msg_id", "event_type"]
+    )
+
+    # 2) Count unique msg_id by event_type
+    counts: Dict[str, int] = {
+        "opens": int(
+            deduped.loc[deduped["event_type"] == "open", "msg_id"]
+            .nunique()
+        ),
+        "clicks": int(
+            deduped.loc[deduped["event_type"] == "click", "msg_id"]
+            .nunique()
+        ),
         "unsubscribes": int(
-            events.loc[
-                events["event_type"] == "unsubscribe",
-                "msg_id"
-                ].nunique()
-            ),
-        "complaints":   int(
-            events.loc[events["event_type"] == "complaint", "msg_id"].nunique()
-            ),
+            deduped.loc[
+                deduped["event_type"] == "unsubscribe", "msg_id"
+            ].nunique()
+        ),
+        "complaints": int(
+            deduped.loc[
+                deduped["event_type"] == "complaint", "msg_id"
+            ].nunique()
+        ),
     }
 
-    # Merge events with send timestamps
-    df = map_df[["msg_id", "send_ts"]].merge(
-        events[["msg_id"]].drop_duplicates(),
-        on="msg_id", how="left", indicator=True
+    # 3) Merge send_log with deduped to identify messages without events
+    merged: pd.DataFrame = send_log[["msg_id", "send_ts"]].merge(
+        deduped[["msg_id"]].drop_duplicates(),
+        on="msg_id",
+        how="left",
+        indicator=True
     )
-    now = datetime.utcnow()
-    threshold = now - timedelta(days=1)
-    # Count msg_id with no events (_merge == "left_only") AND send_ts older
-    #  than threshold
-    stale = df.query("_merge == 'left_only' and send_ts < @threshold")
-    counts["deleted_or_spam"] = len(stale)
+
+    # 4) Define time threshold (7 days ago)
+    now: datetime = datetime.utcnow()
+    threshold: datetime = now - timedelta(days=7)
+
+    # 5) Identify messages with no events and sent before threshold
+    no_event_mask: pd.Series = (
+        (merged["_merge"] == "left_only")
+        & (merged["send_ts"] < threshold)
+    )
+    stale_messages: pd.DataFrame = merged.loc[no_event_mask]
+
+    counts["deleted_or_spam"] = len(stale_messages)
 
     return counts
 
@@ -103,19 +145,11 @@ def _plot_event_counts(events: pd.DataFrame) -> None:
     # ax.set_ylabel("Count")
     # st.pyplot(fig)
     """Plot event counts as a responsive Plotly bar chart."""
-    counts = events["event_type"].value_counts()
-    fig = go.Figure(
-        data=[go.Bar(x=counts.index, y=counts.values)],
-        layout=go.Layout(
-                title="Event Counts",
-                xaxis=dict(title="Event Type"),
-                yaxis=dict(title="Count"),
-                autosize=True,
-                margin=dict(l=40, r=40, t=60, b=40),
-                ),
-        )
-    # En Streamlit, use_container_width=True hace que el gráfico ocupe
-    # todo el ancho disponible de forma adaptativa.
+    events = events.drop_duplicates(subset=["msg_id", "event_type"])
+    counts = events.groupby('event_type')['msg_id'].nunique()
+    fig = px.bar(x=counts.index, y=counts.values,
+                 labels={'x': 'Event type', 'y': 'Unique messages'},
+                 title='Number of messages per event type')
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -145,7 +179,7 @@ def render_stats_view() -> None:
     )
 
     # 3) Load events
-    events = _load_events()
+    events = _load_events().drop_duplicates(subset=["msg_id", "event_type"])
 
     # 4) Load mapping (msg_id → send_ts) into map_df
     map_db_path = os.path.join(
@@ -168,7 +202,7 @@ def render_stats_view() -> None:
     cols[2].metric("Unsubscribes", metrics["unsubscribes"])
     cols[3].metric("Complaints", metrics["complaints"])
     cols[4].metric("Deleted/Spam", metrics["deleted_or_spam"])
-
+    st.write(events.columns)
     # 5) Plot and table of recent events
     if not events.empty:
         _plot_event_counts(events)

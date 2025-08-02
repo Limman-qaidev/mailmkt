@@ -9,7 +9,7 @@ format and are displayed back to the user for verification.
 from __future__ import annotations
 
 import uuid
-from typing import List
+from typing import List, Optional, Any
 
 import pandas as pd
 import streamlit as st
@@ -17,13 +17,15 @@ import os
 import urllib.parse
 import time
 
-from email_marketing.mailer.mailgun_sender import MailgunSender
+# Uncomment if needed add MailgunSender
+# from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
 from email_marketing.ab_testing import assign_variant
 
 
-def _load_recipients(upload) -> List[str]:
-    """Load recipient addresses from an uploaded file.
+def _load_recipients(upload: Optional[Any]) -> List[str]:
+    """
+    Load recipient addresses from an uploaded file.
 
     Supports CSV and Excel formats.  Assumes the first column contains email
     addresses.  Non‑email values are ignored.  Returns a list of strings.
@@ -69,7 +71,8 @@ def render_email_editor() -> None:
     )
 
     # 3) Choose sender
-    sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
+    # Uncomment if needed adding MailgunSender
+    # sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
     send_button = st.button(
         "Send Email", disabled=not recipients or not html_body
         )
@@ -77,14 +80,16 @@ def render_email_editor() -> None:
         return
 
     # 4) Instantiate the chosen sender
-    if sender_choice == "SMTP":
+    # Uncomment if needed add MailgunSender
+    sender = SMTPSender()
+    """if sender_choice == "SMTP":
         sender = SMTPSender()
     else:
         try:
             sender = MailgunSender()
         except Exception as exc:
             st.error(f"Error initializing Mailgun sender: {exc}")
-            return
+            return"""
 
     # 5) Determine tracking URL
     # Override tracking URL manually in the UI if needed
@@ -92,12 +97,12 @@ def render_email_editor() -> None:
         "TRACKING_URL",
         "https://track.jonathansalgadonieto.com"
         )
-    tracking_url = st.text_input(
-        "Tracking URL",
-        value=default_tracking_url,
-        help="URL pública de tu servidor de tracking"
-    ).strip()
-
+    # tracking_url = st.text_input(
+    #     "Tracking URL",
+    #     value=default_tracking_url,
+    #     help="URL pública de tu servidor de tracking"
+    # ).strip()
+    tracking_url = default_tracking_url
     # 6) Debug: show the exact URLs that will be embedded
     # sample_id = uuid.uuid4().hex
     # pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
@@ -169,10 +174,10 @@ def render_email_editor() -> None:
                     </html>
                     """
         # >>> PREVIEW: solo para i==1, muestro el HTML que voy a enviar <<<
-        if i == 1:
-            st.subheader("📧 HTML Preview (first recipient)")
-            st.code(full_html, language="html")
-            st.markdown("---")
+        # if i == 1:
+        #     st.subheader("📧 HTML Preview (first recipient)")
+        #     st.code(full_html, language="html")
+        #     st.markdown("---")
         # f) Send the email
         try:
             sender.send_email(

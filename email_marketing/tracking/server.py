@@ -32,6 +32,21 @@ def _get_db_path() -> str:
     return str(base_dir / "data" / "email_events.db")
 
 
+def _ensure_campaign_column() -> None:
+    """
+    Make sure the 'events' table has a 'campaign' column.
+    If it doesn't exist, add it.
+    """
+    db = _get_db_path()
+    with sqlite3.connect(db) as conn:
+        cols = [row[1] for row in conn.execute(
+            "PRAGMA table_info(events)").fetchall()
+            ]
+        if "campaign" not in cols:
+            conn.execute("ALTER TABLE events ADD COLUMN campaign TEXT")
+            conn.commit()
+
+
 def _init_db() -> None:
     os.makedirs(os.path.dirname(_get_db_path()), exist_ok=True)
     with sqlite3.connect(_get_db_path()) as conn:
@@ -42,7 +57,8 @@ def _init_db() -> None:
                 msg_id TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 client_ip TEXT,
-                ts TEXT NOT NULL
+                ts TEXT NOT NULL,
+                campaign TEXT
             )
             """
         )
@@ -50,14 +66,34 @@ def _init_db() -> None:
 
 def _record_event(msg_id: str,
                   event_type: str,
-                  client_ip: Optional[str]
+                  client_ip: Optional[str],
+                  campaign: Optional[str]
                   ) -> None:
     """Insert a new event into the SQLite database."""
     with sqlite3.connect(_get_db_path()) as conn:
+        if event_type == "open":
+            cur = conn.execute("SELECT COUNT(*) FROM events WHERE msg_id = ?",
+                               (msg_id,))
+            count = cur.fetchone()[0]
+            if count == 0:
+                event_type_to_store = "send"
+            else:
+                event_type_to_store = "open"
+        else:
+            event_type_to_store = event_type
         conn.execute(
-            "INSERT INTO events (msg_id, event_type, client_ip, ts) "
-            "VALUES (?, ?, ?, ?)",
-            (msg_id, event_type, client_ip, dt.datetime.utcnow().isoformat()),
+            """
+            INSERT INTO events
+            (msg_id, event_type, client_ip, ts, campaign)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                msg_id,
+                event_type_to_store,
+                client_ip,
+                dt.datetime.utcnow().isoformat(),
+                campaign,
+            )
         )
         conn.commit()
 
@@ -85,12 +121,13 @@ class SubscribeRequest(BaseModel):
 async def pixel(
         request: Request,
         msg_id: str,
+        campaign: Optional[str] = None,
         ts: Optional[str] = None  # parámetro anti-cache
         ) -> Response:
     """Return a 1×1 GIF, record an 'open', y evitar caching."""
-    client_ip = request.client.host if request.client else None
+    # client_ip = request.client.host if request.client else None
     # print(f"[DEBUG] PIXEL HIT msg_id={msg_id} from {client_ip}")
-    _record_event(msg_id, "open", client_ip)
+    # _record_event(msg_id, "open", client_ip)
 
     # Decode the 1×1 transparent GIF
     gif_b64 = "R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
@@ -127,7 +164,7 @@ async def click_get(request: Request,
     """Record a click event via GET and redirect to the target URL."""
     client_ip = request.client.host if request.client else None
     # print(f"[DEBUG] CLICK HIT msg_id={msg_id}, redirecting to {url}")
-    _record_event(msg_id, "click", client_ip)
+    _record_event(msg_id, "click", client_ip, None)
     return RedirectResponse(url)
 
 
@@ -137,7 +174,7 @@ async def unsubscribe_get(request: Request, msg_id: str) -> PlainTextResponse:
     """Record an unsubscribe event via GET and confirm."""
     client_ip = request.client.host if request.client else None
     # print(f"[DEBUG] UNSUBSCRIBE HIT msg_id={msg_id}")
-    _record_event(msg_id, "unsubscribe", client_ip)
+    _record_event(msg_id, "unsubscribe", client_ip, None)
     return PlainTextResponse("You have been unsubscribed")
 
 
@@ -147,7 +184,7 @@ async def complaint_get(request: Request, msg_id: str) -> PlainTextResponse:
     """Record a spam complaint event via GET and confirm."""
     client_ip = request.client.host if request.client else None
     # print(f"[DEBUG] COMPLAINT HIT msg_id={msg_id}")
-    _record_event(msg_id, "complaint", client_ip)
+    _record_event(msg_id, "complaint", client_ip, None)
     return PlainTextResponse("Thank you, your complaint has been recorded")
 
 
@@ -167,9 +204,8 @@ async def logo(request: Request,
     """
     client_ip = request.client.host if request.client else None
     print(f"[DEBUG] LOGO HIT msg_id={msg_id} from {client_ip}")
-    # _record_event(msg_id, "open", client_ip)
     # Location of the static logo file
-    logo_path = Path(__file__).resolve().parent.parent / "static" / "logo.png"
+    logo_path = Path(__file__).resolve().parent / "static" / "logo.png"
     headers = {
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache",
@@ -235,7 +271,7 @@ def create_app() -> FastAPI:
 @app.head("/click", include_in_schema=False)
 async def click_head(request: Request, msg_id: str, url: str) -> Response:
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "click", client_ip)
+    _record_event(msg_id, "click", client_ip, None)
     # Devolvemos sólo la cabecera de redirección (301/307) sin cuerpo
     return Response(status_code=307, headers={"Location": url})
 
@@ -244,7 +280,7 @@ async def click_head(request: Request, msg_id: str, url: str) -> Response:
 @app.head("/unsubscribe", include_in_schema=False)
 async def unsubscribe_head(request: Request, msg_id: str) -> Response:
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "unsubscribe", client_ip)
+    _record_event(msg_id, "unsubscribe", client_ip, None)
     return Response(status_code=200)
 
 
@@ -252,5 +288,5 @@ async def unsubscribe_head(request: Request, msg_id: str) -> Response:
 @app.head("/complaint", include_in_schema=False)
 async def complaint_head(request: Request, msg_id: str) -> Response:
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "complaint", client_ip)
+    _record_event(msg_id, "complaint", client_ip, None)
     return Response(status_code=200)

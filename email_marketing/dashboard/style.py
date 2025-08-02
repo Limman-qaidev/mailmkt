@@ -32,7 +32,6 @@ class Theme:
 THEME = Theme()
 
 
-
 def apply_theme() -> None:
     """Inject custom CSS into the Streamlit page.
 
@@ -74,7 +73,6 @@ def apply_theme() -> None:
     st.markdown(css, unsafe_allow_html=True)
 
 
-
 def get_refresh_interval() -> int:
     """Return the auto‑refresh interval for the dashboard in seconds.
 
@@ -83,6 +81,6 @@ def get_refresh_interval() -> int:
     seconds is used.
     """
     try:
-        return int(os.environ.get("REFRESH_INTERVAL", "60"))
+        return int(os.environ.get("REFRESH_INTERVAL", "10"))
     except ValueError:
-        return 60
+        return 10
