@@ -17,12 +17,12 @@ import datetime as dt
 import os
 import sqlite3
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import PlainTextResponse, RedirectResponse, FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr
-from pathlib import Path
 
 
 def _get_db_path() -> str:
@@ -30,6 +30,12 @@ def _get_db_path() -> str:
     base_dir: Path = Path(__file__).resolve().parent.parent
     # Events DB in .../email_marketing/data/email_events.db
     return str(base_dir / "data" / "email_events.db")
+
+
+def _get_map_db_path() -> str:
+    """Return path to the msg_id → recipient mapping database."""
+    base_dir: Path = Path(__file__).resolve().parent.parent
+    return str(base_dir / "data" / "email_map.db")
 
 
 def _ensure_campaign_column() -> None:
@@ -70,6 +76,29 @@ def _record_event(msg_id: str,
                   campaign: Optional[str]
                   ) -> None:
     """Insert a new event into the SQLite database."""
+    send_ts: Optional[dt.datetime] = None
+    map_db = _get_map_db_path()
+    if os.path.exists(map_db):
+        try:
+            with sqlite3.connect(map_db) as conn_map:
+                row = conn_map.execute(
+                    "SELECT send_ts FROM email_map WHERE msg_id=?", (msg_id,)
+                ).fetchone()
+            if row and row[0]:
+                send_ts = dt.datetime.fromisoformat(row[0])
+        except sqlite3.Error:
+            send_ts = None
+
+    if event_type == "open" and send_ts is not None:
+        grace_seconds = int(
+            os.environ.get("OPEN_EVENT_GRACE_PERIOD_SECONDS", "60")
+            )
+        if (
+            dt.datetime.utcnow() - send_ts < dt.timedelta(
+                seconds=grace_seconds
+            )
+        ):
+            return
     with sqlite3.connect(_get_db_path()) as conn:
 
         conn.execute(
@@ -107,6 +136,21 @@ class SubscribeRequest(BaseModel):
     email: EmailStr
 
 
+def _should_count_open(request: Request) -> bool:
+    """Return True if the request looks like a real user opening the email.
+
+    Some mail providers (notably Gmail) prefetch remote images using a
+    special user agent (``GoogleImageProxy``) as soon as the message is
+    received.  This causes opens to be recorded before the recipient actually
+    views the email.  To mitigate this, ignore requests from known proxy
+    agents so only real client loads are counted as opens.
+    """
+
+    ua = request.headers.get("User-Agent", "")
+    blocked_agents = ["GoogleImageProxy"]
+    return not any(agent in ua for agent in blocked_agents)
+
+
 @app.get("/pixel", response_class=Response,
          summary="Tracking pixel")
 async def pixel(
@@ -117,7 +161,8 @@ async def pixel(
         ) -> Response:
     """Return a 1×1 GIF, record an 'open', y evitar caching."""
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "open", client_ip, campaign)
+    if _should_count_open(request):
+        _record_event(msg_id, "open", client_ip, campaign)
 
     # Decode the 1×1 transparent GIF
     gif_b64 = "R0lGODlhAQABAPAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="
@@ -138,9 +183,9 @@ async def pixel(
 async def pixel_head(request: Request, msg_id: str) -> Response:
     headers = {
          "Cache-Control": "no-cache, no-store, must-revalidate",
-         "Pragma":        "no-cache",
-         "Expires":       "0",
-         "Content-Type":  "image/gif",
+         "Pragma": "no-cache",
+         "Expires": "0",
+         "Content-Type": "image/gif",
     }
     return Response(status_code=200, headers=headers)
 
@@ -200,9 +245,12 @@ async def logo(
     - ts: timestamp to bust proxy cache
     """
     client_ip = request.client.host if request.client else None
-    _record_event(msg_id, "open", client_ip, campaign)
+    if _should_count_open(request):
+        _record_event(msg_id, "open", client_ip, campaign)
     # Location of the static logo file
-    logo_path = Path(__file__).resolve().parent / "static" / "logo.png"
+    logo_path = (
+        Path(__file__).resolve().parent / "static" / "corporate_logo.png"
+    )
     headers = {
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache",

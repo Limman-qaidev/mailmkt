@@ -88,46 +88,59 @@ def _compute_metrics(
             "deleted_or_spam": int
         }
     """
-    # 1) Drop duplicate (msg_id, event_type) pairs
-    deduped: pd.DataFrame = events.drop_duplicates(
-        subset=["msg_id", "event_type"]
+    # 1) Merge send timestamps into the events DataFrame
+    merged_events: pd.DataFrame = events.merge(
+        send_log[["msg_id", "send_ts"]], on="msg_id", how="left"
     )
 
-    # 2) Count unique msg_id by event_type
+    # 2) Discard "open" events occurring within the first minute after send
+    with_ts: pd.Series = merged_events["send_ts"].notna()
+    early_open_mask: pd.Series = (
+        (merged_events["event_type"] == "open")
+        & with_ts
+        & ((
+            merged_events["ts"] - merged_events["send_ts"]
+            ).dt.total_seconds() < 60)
+    )
+    filtered_events: pd.DataFrame = merged_events.loc[~early_open_mask].copy()
+
+    # 3) Drop duplicate (msg_id, event_type) pairs
+    deduped: pd.DataFrame = filtered_events.drop_duplicates(
+        subset=["msg_id", "event_type"]
+        )
+
+    # 4) Count unique msg_id by event_type
     counts: Dict[str, int] = {
         "opens": int(
-            deduped.loc[deduped["event_type"] == "open", "msg_id"]
-            .nunique()
-        ),
+            deduped.loc[deduped["event_type"] == "open", "msg_id"].nunique()
+            ),
         "clicks": int(
-            deduped.loc[deduped["event_type"] == "click", "msg_id"]
-            .nunique()
-        ),
+            deduped.loc[deduped["event_type"] == "click", "msg_id"].nunique()
+            ),
         "unsubscribes": int(
             deduped.loc[
                 deduped["event_type"] == "unsubscribe", "msg_id"
-            ].nunique()
+                ].nunique()
         ),
         "complaints": int(
             deduped.loc[
                 deduped["event_type"] == "complaint", "msg_id"
-            ].nunique()
-        ),
+                ].nunique()),
     }
 
-    # 3) Merge send_log with deduped to identify messages without events
+    # 5) Merge send_log with deduped to identify messages without events
     merged: pd.DataFrame = send_log[["msg_id", "send_ts"]].merge(
         deduped[["msg_id"]].drop_duplicates(),
         on="msg_id",
         how="left",
-        indicator=True
+        indicator=True,
     )
 
-    # 4) Define time threshold (7 days ago)
+    # 6) Define time threshold (7 days ago)
     now: datetime = datetime.utcnow()
     threshold: datetime = now - timedelta(days=7)
 
-    # 5) Identify messages with no events and sent before threshold
+    # 7) Identify messages with no events and sent before threshold
     no_event_mask: pd.Series = (
         (merged["_merge"] == "left_only")
         & (merged["send_ts"] < threshold)
@@ -208,7 +221,7 @@ def render_stats_view() -> None:
     cols[2].metric("Unsubscribes", metrics["unsubscribes"])
     cols[3].metric("Complaints", metrics["complaints"])
     cols[4].metric("Deleted/Spam", metrics["deleted_or_spam"])
-    st.write(events.columns)
+
     # 5) Plot and table of recent events
     if not events.empty:
         _plot_event_counts(events)

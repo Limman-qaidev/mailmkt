@@ -117,6 +117,7 @@ The following environment variables configure runtime behaviour:
 | `TRACKING_URL`    | Base URL of the tracking server            |
 | `REDIS_URL`       | Redis connection URI for workflows         |
 | `REFRESH_INTERVAL`| Seconds between dashboard refreshes        |
+| `OPEN_EVENT_GRACE_PERIOD_SECONDS` | Ignore opens occurring within this many seconds of sending |
 
 When unspecified, sensible defaults are used or the feature is disabled.
 
