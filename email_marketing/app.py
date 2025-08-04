@@ -27,7 +27,12 @@ root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, root_dir)
 
 try:
-    from email_marketing.dashboard import email_editor, stats_view, style
+    from email_marketing.dashboard import (
+        email_editor,
+        stats_view,
+        campaign_metrics_view,
+        style,
+    )
 except ImportError:
     raise ImportError("Failed to import dashboard modules")
 
@@ -111,12 +116,16 @@ def main() -> None:
 
     # Sidebar navigation
     st.sidebar.title("Mail watcher")
-    page = st.sidebar.selectbox("Navigate", ("Email Editor", "Statistics"))
+    page = st.sidebar.selectbox(
+        "Navigate", ("Email Editor", "Statistics", "Campaign Metrics")
+    )
 
     if page == "Email Editor":
         email_editor.render_email_editor()
     elif page == "Statistics":
         stats_view.render_stats_view()
+    elif page == "Campaign Metrics":
+        campaign_metrics_view.render_campaign_metrics_view()
     else:
         st.write("Unsupported page selected.")
 

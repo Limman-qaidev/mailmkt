@@ -18,9 +18,10 @@ email_marketing/
 │   └─ server.py
 ├─ dashboard/            # Streamlit components for the UI
 │   ├─ __init__.py
-│   ├─ email_editor.py   # Rich HTML editor and list uploader
-│   ├─ stats_view.py     # Metric tiles and plots
-│   └─ style.py          # Theme configuration and CSS injection
+│   ├─ email_editor.py        # Rich HTML editor and list uploader
+│   ├─ stats_view.py          # Metric tiles and plots
+│   ├─ campaign_metrics_view.py # Per‑campaign opens/clicks/signups
+│   └─ style.py               # Theme configuration and CSS injection
 ├─ workflows/            # Background job orchestration
 │   ├─ __init__.py
 │   └─ seed_polling.py   # Example IMAP polling task
@@ -65,6 +66,7 @@ The dashboard is implemented with Streamlit.  It includes:
 
 * **Email editor** – upload recipient lists (CSV/XLSX) and craft HTML bodies.  The editor uses the theme defined in `style.py`.
 * **Stats view** – summary metrics (opens, clicks, unsubscribe rate) with Matplotlib charts and a table of recent events.
+* **Campaign metrics** – per campaign breakdown of opens, clicks and signups, rendered as a table and bar chart.
 * **Auto‑refresh** – the refresh interval is configurable via environment variables or the style module.
 
 ### Advanced Features
@@ -72,6 +74,7 @@ The dashboard is implemented with Streamlit.  It includes:
 * **Double opt‑in** – `POST /subscribe` issues a confirmation token, and `GET /confirm/<token>` activates the subscriber.
 * **A/B testing** – the `ab_testing` package assigns recipients to variants and extends `email_map.db` with a `variant` column.
 * **Workflows** – background workers (via RQ or Celery) consume the event stream to schedule follow‑ups.  An example IMAP polling task (`workflows/seed_polling.py`) demonstrates how to check a spam folder.
+* **Distribution list recommendations** – campaign-based suggestions powered by a logistic regression model. See [docs/distribution_lists.md](docs/distribution_lists.md) for the full flow.
 
 ## Getting Started
 

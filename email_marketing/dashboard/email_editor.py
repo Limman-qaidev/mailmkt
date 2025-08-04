@@ -8,21 +8,24 @@ format and are displayed back to the user for verification.
 
 from __future__ import annotations
 
-import uuid
-from typing import List, Optional, Any
-
-import pandas as pd
-import streamlit as st
 import os
 import urllib.parse
 import time
 
+import uuid
+from typing import Any, List, Optional
+
+import pandas as pd
+import streamlit as st
+
+from email_marketing.ab_testing import assign_variant
+from email_marketing.analytics import calibration
+from email_marketing.analytics import model as analytics_model
+from email_marketing.analytics.recommend import get_distribution_list
+
 # Uncomment if needed add MailgunSender
 # from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
-from email_marketing.ab_testing import assign_variant
-from email_marketing.analytics.recommend import get_distribution_list
-from email_marketing.analytics import calibration, model as analytics_model
 
 
 def _load_recipients(upload: Optional[Any]) -> List[str]:
@@ -54,6 +57,9 @@ def render_email_editor() -> None:
     """Render the email editor page in Streamlit."""
     st.header("Email Campaign Editor")
 
+    if "preview_list" not in st.session_state:
+        st.session_state["preview_list"] = []
+
     # 1) Upload recipient list
     mode = st.radio("Recipient source", ["Upload list", "By campaign type"])
     recipients: List[str] = []
@@ -67,15 +73,23 @@ def render_email_editor() -> None:
             st.success(f"Loaded {len(recipients)} recipients.")
             st.dataframe(pd.DataFrame({"email": recipients}))
     else:
-        campaign_id = st.text_input("Campaign ID")
+        campaign_id = st.text_input(
+            "Campaign ID",
+            help="Identifier of the campaign used to "
+            "build the recommendation list.",
+        )
         threshold = st.slider(
             "Recommendation threshold",
             min_value=0.0,
             max_value=1.0,
             value=0.5,
             step=0.05,
+            help=(
+                "Minimum probability required to include a recipient in the "
+                "recommended list."
+                ),
         )
-        if campaign_id:
+        if st.button("Preview") and campaign_id:
             try:
                 recipients = get_distribution_list(campaign_id, threshold)
                 st.success(
@@ -85,6 +99,22 @@ def render_email_editor() -> None:
                     st.dataframe(pd.DataFrame({"email": recipients}))
             except Exception as exc:
                 st.error(f"Recommendation failed: {exc}")
+
+        if st.session_state["preview_list"]:
+            domains = sorted({
+                email.split("@")[-1] for email in st.session_state[
+                    "preview_list"
+                    ]
+                })
+            selected = st.multiselect("Filter by domain", domains)
+            recipients = [
+                e
+                for e in st.session_state["preview_list"]
+                if not selected or e.split("@")[-1] in selected
+            ]
+            st.success(f"Loaded {len(recipients)} recommended recipients.")
+            if recipients:
+                st.dataframe(pd.DataFrame({"email": recipients}))
 
     # 2) Compose subject and HTML body
     subject = st.text_input("Subject", max_chars=200)

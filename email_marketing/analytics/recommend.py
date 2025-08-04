@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, cast
 
 import pandas as pd
 
@@ -30,4 +30,4 @@ def get_distribution_list(
         ) -> List[str]:
     """Return a simple list of recommended email addresses."""
     df = recommend_clients(campaign_id, threshold)
-    return df["email"].tolist()
+    return cast(List[str], df["email"].astype(str).tolist())

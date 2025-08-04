@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from . import email_editor
 from . import stats_view
+from . import campaign_metrics_view
 from . import style
 
 
-__all__ = ["email_editor", "stats_view", "style"]
+__all__ = ["email_editor", "stats_view", "campaign_metrics_view", "style"]
