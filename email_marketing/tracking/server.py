@@ -91,7 +91,7 @@ def _record_event(msg_id: str,
 
     if event_type == "open" and send_ts is not None:
         grace_seconds = int(
-            os.environ.get("OPEN_EVENT_GRACE_PERIOD_SECONDS", "60")
+            os.environ.get("OPEN_EVENT_GRACE_PERIOD_SECONDS", "30")
             )
         if (
             dt.datetime.utcnow() - send_ts < dt.timedelta(
@@ -137,18 +137,20 @@ class SubscribeRequest(BaseModel):
 
 
 def _should_count_open(request: Request) -> bool:
-    """Return True if the request looks like a real user opening the email.
+    """Return ``True`` only for genuine user initiated image loads.
 
-    Some mail providers (notably Gmail) prefetch remote images using a
-    special user agent (``GoogleImageProxy``) as soon as the message is
-    received.  This causes opens to be recorded before the recipient actually
-    views the email.  To mitigate this, ignore requests from known proxy
-    agents so only real client loads are counted as opens.
+    Gmail and some other providers retrieve remote images through a proxy
+    (``GoogleImageProxy``) both when the message is received and when the user
+    actually views it.  The prefetch requests lack the ``X-Forwarded-For``
+    header containing the recipient's IP address.  By requiring this header
+    when ``GoogleImageProxy`` is present we avoid counting those early
+    prefetches as opens.
     """
 
     ua = request.headers.get("User-Agent", "")
-    blocked_agents = ["GoogleImageProxy"]
-    return not any(agent in ua for agent in blocked_agents)
+    if "GoogleImageProxy" in ua and not request.headers.get("X-Forwarded-For"):
+        return False
+    return True
 
 
 @app.get("/pixel", response_class=Response,

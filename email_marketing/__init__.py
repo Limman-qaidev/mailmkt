@@ -19,6 +19,7 @@ __all__ = [
     "dashboard",
     "workflows",
     "ab_testing",
+    "analytics",
 ]
 
 # SemVer version of the package

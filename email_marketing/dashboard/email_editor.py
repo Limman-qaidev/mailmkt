@@ -21,6 +21,8 @@ import time
 # from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
 from email_marketing.ab_testing import assign_variant
+from email_marketing.analytics.recommend import get_distribution_list
+from email_marketing.analytics import calibration, model as analytics_model
 
 
 def _load_recipients(upload: Optional[Any]) -> List[str]:
@@ -53,14 +55,36 @@ def render_email_editor() -> None:
     st.header("Email Campaign Editor")
 
     # 1) Upload recipient list
-    upload = st.file_uploader(
-        "Upload recipient list (CSV or Excel)",
-        type=["csv", "xls", "xlsx"],
-    )
-    recipients = _load_recipients(upload)
-    if recipients:
-        st.success(f"Loaded {len(recipients)} recipients.")
-        st.dataframe(pd.DataFrame({"email": recipients}))
+    mode = st.radio("Recipient source", ["Upload list", "By campaign type"])
+    recipients: List[str] = []
+    if mode == "Upload list":
+        upload = st.file_uploader(
+            "Upload recipient list (CSV or Excel)",
+            type=["csv", "xls", "xlsx"],
+        )
+        recipients = _load_recipients(upload)
+        if recipients:
+            st.success(f"Loaded {len(recipients)} recipients.")
+            st.dataframe(pd.DataFrame({"email": recipients}))
+    else:
+        campaign_id = st.text_input("Campaign ID")
+        threshold = st.slider(
+            "Recommendation threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5,
+            step=0.05,
+        )
+        if campaign_id:
+            try:
+                recipients = get_distribution_list(campaign_id, threshold)
+                st.success(
+                    f"Loaded {len(recipients)} recommended recipients."
+                )
+                if recipients:
+                    st.dataframe(pd.DataFrame({"email": recipients}))
+            except Exception as exc:
+                st.error(f"Recommendation failed: {exc}")
 
     # 2) Compose subject and HTML body
     subject = st.text_input("Subject", max_chars=200)
@@ -70,9 +94,16 @@ def render_email_editor() -> None:
         placeholder="<p>Hello {{ name }}, welcome to our newsletter.</p>",
     )
 
-    # 3) Choose sender
+    # 3) Choose sender and analytics actions
     # Uncomment if needed adding MailgunSender
     # sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
+    st.sidebar.subheader("Analytics")
+    if st.sidebar.button("Recalculate weights"):
+        calibration.recalculate_weights()
+        st.sidebar.success("Weights recalibrated")
+    if st.sidebar.button("Retrain model"):
+        analytics_model.train_model()
+        st.sidebar.success("Model trained")
     send_button = st.button(
         "Send Email", disabled=not recipients or not html_body
         )
