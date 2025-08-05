@@ -17,10 +17,10 @@ def _create_events_db(path: Path) -> None:
     cur.executemany(
         "INSERT INTO events VALUES (?,?,?,?)",
         [
-            ("c1", "m1", "open", "2020-01-01 00:00:00"),
-            ("c1", "m1", "click", "2020-01-01 00:01:00"),
-            ("c1", "m1", "unsubscribe", "2020-01-01 00:02:00"),
-            ("c1", "m1", "complaint", "2020-01-01 00:03:00"),
+            ("m1", "open", "2020-01-01 00:00:00"),
+            ("m1", "click", "2020-01-01 00:01:00"),
+            ("m1", "unsubscribe", "2020-01-01 00:02:00"),
+            ("m1", "complaint", "2020-01-01 00:03:00"),
         ],
     )
     conn.commit()
@@ -58,7 +58,7 @@ def _create_campaigns_db(path: Path) -> None:
         ("c1", "Test", "2020-01-01", "2020-01-02", 100.0),
     )
     cur.execute(
-        "INSERT INTO user_signup VALUES (?,?,?,?)",
+        "INSERT INTO user_signup VALUES (?,?,?)",
         ("s1", "c1", "Alice", "a@example.com"),
     )
     conn.commit()
@@ -79,6 +79,7 @@ def test_load_all_data(tmp_path: Path) -> None:
     )
 
     assert not events.empty
+    assert "campaign_id" in events.columns
     assert not sends.empty
     assert not campaigns.empty
 

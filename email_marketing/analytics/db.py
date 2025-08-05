@@ -143,14 +143,27 @@ def load_all_data(
         if not Path(path_str).exists():
             raise FileNotFoundError(f"Database not found: {path_str}")
 
-    events = _safe_read_query(
-        Path(events_db),
-        "SELECT campaign_id, msg_id, event_type, event_ts FROM events",
-    )
+    # Load raw tables
+    events = _safe_read_query(Path(events_db), "SELECT * FROM events")
     sends = _safe_read_query(
         Path(sends_db),
         "SELECT campaign_id, msg_id, email, send_ts FROM send_log",
     )
+
+    # Normalise event timestamp column name
+    if "event_ts" not in events.columns and "ts" in events.columns:
+        events = events.rename(columns={"ts": "event_ts"})
+
+    # If campaign information is missing from the events table, join it from
+    # the send log using ``msg_id``.
+    if "campaign_id" not in events.columns:
+        events = events.merge(
+            sends[["campaign_id", "msg_id"]],
+            on="msg_id",
+            how="left",
+        )
+
+    events = events[["campaign_id", "msg_id", "event_type", "event_ts"]]
     campaigns = _safe_read_query(
         Path(campaigns_db),
         (
