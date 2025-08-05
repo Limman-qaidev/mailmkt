@@ -10,10 +10,11 @@ from email_marketing.analytics import db, metrics
 
 def _default_db_paths() -> tuple[str, str, str]:
     """Return default locations for the analytics SQLite databases."""
-    events = db.DATA_DIR / "email_events.db"
-    sends = db.DATA_DIR / "email_map_old.db"
-    campaigns = db.DATA_DIR / "campaigns.db"
-    return str(events), str(sends), str(campaigns)
+    return (
+        str(db.EVENTS_DB),
+        str(db.MAP_DB),
+        str(db.CAMPAIGNS_DB),
+    )
 
 
 def render_campaign_metrics_view() -> None:
@@ -50,8 +51,8 @@ def render_campaign_metrics_view() -> None:
 
     selection = st.selectbox(
         "Select Campaign",
-        list(campaign_options.values())
-        )
+        list(campaign_options.values()),
+    )
     selected_id = next(
         cid for cid, label in campaign_options.items() if label == selection
     )
@@ -72,6 +73,10 @@ def render_campaign_metrics_view() -> None:
     # Plot using Streamlit's built-in bar chart for quick visualisation.
     with metrics_tab:
         if selected_id in metrics_df.index:
-            st.dataframe(metrics_df.loc[[selected_id]])
+            st.dataframe(metrics_df.loc[[selected_id]].reset_index())
         else:
             st.info("No metrics for selected campaign.")
+
+
+if __name__ == "__main__":  # pragma: no cover - manual execution
+    render_campaign_metrics_view()

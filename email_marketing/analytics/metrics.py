@@ -9,6 +9,7 @@ def compute_campaign_metrics(
     sends: pd.DataFrame, events: pd.DataFrame, signups: pd.DataFrame
 ) -> pd.DataFrame:
     """Compute per-campaign counts and rates of engagement events.
+
     Parameters
     ----------
     sends:
@@ -25,23 +26,6 @@ def compute_campaign_metrics(
         unsubscribes, complaints and signups, along with corresponding rates.
     """
 
-    if events.empty:
-        return pd.DataFrame(
-            columns=[
-                "campaign_id",
-                "N_sends",
-                "N_opens",
-                "N_clicks",
-                "N_unsubscribes",
-                "N_complaints",
-                "N_signups",
-                "open_rate",
-                "click_rate",
-                "unsubscribe_rate",
-                "signup_rate",
-            ]
-        ).set_index("campaign_id")
-
     send_counts = sends.groupby(
         "campaign_id"
         )["msg_id"].nunique().rename("N_sends")
@@ -56,8 +40,7 @@ def compute_campaign_metrics(
                 values="msg_id",
                 aggfunc="nunique",
                 fill_value=0,
-            )
-            .rename(
+            ).rename(
                 columns={
                     "open": "N_opens",
                     "click": "N_clicks",
@@ -76,6 +59,15 @@ def compute_campaign_metrics(
     )
 
     metrics = pd.concat([send_counts, event_counts, signup_counts], axis=1)
+    for col in [
+        "N_opens",
+        "N_clicks",
+        "N_unsubscribes",
+        "N_complaints",
+        "N_signups",
+    ]:
+        if col not in metrics:
+            metrics[col] = 0
     metrics = metrics.fillna(0).astype(
         {
             "N_sends": int,

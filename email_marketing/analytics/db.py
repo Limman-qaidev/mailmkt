@@ -7,6 +7,7 @@ further processing by the analytics pipeline.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Optional, Tuple
@@ -17,7 +18,10 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "data"
 EVENTS_DB = DATA_DIR / "email_events.db"
-MAP_DB = DATA_DIR / "email_map.db"
+MAP_DB = DATA_DIR / "email_map_old.db"
+CAMPAIGNS_DB = DATA_DIR / "campaigns.db"
+
+LOGGER = logging.getLogger(__name__)
 
 
 def get_connection(path: str) -> sqlite3.Connection:
@@ -35,16 +39,33 @@ def get_connection(path: str) -> sqlite3.Connection:
 def _safe_read_query(path: Path, query: str) -> pd.DataFrame:
     """Execute ``query`` against ``path`` and return a DataFrame.
 
-    If the database or table does not exist, an empty DataFrame with the
-    appropriate columns is returned instead of raising an exception.
+    Parameters
+    ----------
+    path:
+        Location of the SQLite database.
+    query:
+        SQL statement to execute.
+
+    Returns
+    -------
+    pd.DataFrame
+        Result of the query.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the database file does not exist.
+    sqlite3.DatabaseError
+        If executing the query fails.
     """
     if not path.exists():
-        return pd.DataFrame()
+        raise FileNotFoundError(f"Database not found: {path}")
     with get_connection(str(path)) as conn:
         try:
             return pd.read_sql_query(query, conn)
-        except Exception:
-            return pd.DataFrame()
+        except sqlite3.DatabaseError as exc:  # pragma: no cover - defensive
+            LOGGER.error("Query failed for %s: %s", path, exc)
+            raise
 
 
 def load_event_log(path: Optional[Path] = None) -> pd.DataFrame:
@@ -79,18 +100,18 @@ def load_campaigns(path: Optional[Path] = None) -> pd.DataFrame:
     ``campaign_id`` and ``name``.  If unavailable, an empty DataFrame is
     returned.
     """
-    db_path = path or MAP_DB
+    db_path = path or CAMPAIGNS_DB
     return _safe_read_query(db_path, "SELECT * FROM campaigns")
 
 
 def load_user_signups(path: Optional[Path] = None) -> pd.DataFrame:
     """Load user signup information.
 
-    Expects a table ``user_signups`` with columns ``email`` and
+    Expects a table ``user_signup`` with columns ``email`` and
     ``campaign_id``.  Missing tables yield an empty DataFrame.
     """
-    db_path = path or MAP_DB
-    return _safe_read_query(db_path, "SELECT * FROM user_signups")
+    db_path = path or CAMPAIGNS_DB
+    return _safe_read_query(db_path, "SELECT * FROM user_signup")
 
 
 def load_all_data(
@@ -118,10 +139,13 @@ def load_all_data(
             campaigns(campaign_id, name, start_date, end_date, budget)
             signups  (signup_id, campaign_id, client_name, email)
     """
+    for path_str in (events_db, sends_db, campaigns_db):
+        if not Path(path_str).exists():
+            raise FileNotFoundError(f"Database not found: {path_str}")
 
     events = _safe_read_query(
         Path(events_db),
-        "SELECT campaign_id, msg_id, event_type, event_ts FROM event_log",
+        "SELECT campaign_id, msg_id, event_type, event_ts FROM events",
     )
     sends = _safe_read_query(
         Path(sends_db),
