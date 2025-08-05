@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import pandas as pd
 
@@ -23,10 +23,11 @@ MAP_DB = DATA_DIR / "email_map.db"
 def get_connection(path: str) -> sqlite3.Connection:
     """Return a connection to the SQLite database at ``path``.
 
-    The connection uses ``sqlite3.Row`` as the row factory so columns can
-    be accessed by name.
+    The connection uses ``sqlite3.Row`` as the row factory and enables
+    ``PARSE_DECLTYPES`` so SQLite types are converted into appropriate
+    Python objects (e.g. ``datetime``).
     """
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -84,3 +85,45 @@ def load_user_signups(path: Optional[Path] = None) -> pd.DataFrame:
     """
     db_path = path or MAP_DB
     return _safe_read_query(db_path, "SELECT * FROM user_signups")
+
+
+def load_all_data(
+    events_db: str, sends_db: str, campaigns_db: str
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load core tables from the three analytics databases.
+
+    Parameters
+    ----------
+    events_db:
+        Path to the database containing ``event_log``.
+    sends_db:
+        Path to the database containing ``send_log``.
+    campaigns_db:
+        Path to the database containing ``campaigns`` and ``user_signup``.
+
+    Returns
+    -------
+    Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
+        DataFrames for events, sends, campaigns and signups respectively.
+    """
+
+    events = _safe_read_query(
+        Path(events_db),
+        "SELECT campaign_id, msg_id, event_type, event_ts FROM event_log",
+    )
+    sends = _safe_read_query(
+        Path(sends_db),
+        "SELECT campaign_id, msg_id, send_ts FROM send_log",
+    )
+    campaigns = _safe_read_query(
+        Path(campaigns_db),
+        (
+            "SELECT campaign_id, name, start_date, end_date, budget "
+            "FROM campaigns"
+        ),
+    )
+    signups = _safe_read_query(
+        Path(campaigns_db),
+        "SELECT signup_id, campaign_id, client_name, email FROM user_signup",
+    )
+    return events, sends, campaigns, signups
