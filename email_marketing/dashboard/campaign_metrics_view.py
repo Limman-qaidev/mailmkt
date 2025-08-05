@@ -1,4 +1,4 @@
-"""Campaign metrics view for Streamlit dashboard."""
+"""Campaign analytics view for the Streamlit dashboard."""
 
 from __future__ import annotations
 

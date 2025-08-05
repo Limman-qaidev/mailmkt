@@ -61,9 +61,15 @@ def load_event_log(path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_send_log(path: Optional[Path] = None) -> pd.DataFrame:
-    """Load the send log mapping ``msg_id`` to recipients and campaigns."""
+    """Load the send log mapping ``msg_id`` to recipients and campaigns.
+
+    The table is expected to expose ``campaign_id``, ``msg_id`` and
+    ``email`` columns.  Missing tables yield an empty DataFrame.
+    """
     db_path = path or MAP_DB
-    return _safe_read_query(db_path, "SELECT * FROM email_map")
+    return _safe_read_query(
+        db_path, "SELECT campaign_id, msg_id, email, send_ts FROM send_log"
+    )
 
 
 def load_campaigns(path: Optional[Path] = None) -> pd.DataFrame:
@@ -104,7 +110,13 @@ def load_all_data(
     Returns
     -------
     Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
-        DataFrames for events, sends, campaigns and signups respectively.
+        DataFrames for events, sends, campaigns and signups respectively,
+        with column structures::
+
+            events   (campaign_id, msg_id, event_type, event_ts)
+            sends    (campaign_id, msg_id, email, send_ts)
+            campaigns(campaign_id, name, start_date, end_date, budget)
+            signups  (signup_id, campaign_id, client_name, email)
     """
 
     events = _safe_read_query(
@@ -113,7 +125,7 @@ def load_all_data(
     )
     sends = _safe_read_query(
         Path(sends_db),
-        "SELECT campaign_id, msg_id, send_ts FROM send_log",
+        "SELECT campaign_id, msg_id, email, send_ts FROM send_log",
     )
     campaigns = _safe_read_query(
         Path(campaigns_db),
