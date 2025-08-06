@@ -82,38 +82,38 @@ def load_event_log(path: Optional[Path] = None) -> pd.DataFrame:
 
 
 def load_send_log(path: Optional[Path] = None) -> pd.DataFrame:
-    """Load the send log mapping ``msg_id`` to recipients and campaigns.
+    """Load the mapping from ``msg_id`` to recipient addresses.
 
-    The schema of the underlying table can vary between deployments.  We
-    therefore attempt a couple of known options and normalise the result to
-    expose at least ``msg_id`` and ``email`` columns.  If no recognised table
-    is found, an empty :class:`~pandas.DataFrame` is returned.
+    Two table layouts are supported:
+
+    ``send_log`` with columns ``campaign_id``, ``msg_id``, ``email`` and
+    ``send_ts``;
+    and ``email_map`` with just ``msg_id`` and ``recipient``.  Column names are
+    normalised so that at least ``msg_id`` and ``email`` are present in the
+    returned DataFrame.  If neither table exists an empty DataFrame is
+    returned.
     """
 
     db_path = path or MAP_DB
 
-    queries = [
-        "SELECT campaign_id, msg_id, email, send_ts FROM email_map",
-        "SELECT msg_id, recipient AS email FROM email_map",
-    ]
-
-    for query in queries:
-        try:
-            df = _safe_read_query(db_path, query)
-            break
-        except sqlite3.DatabaseError:
-            df = pd.DataFrame()
-    else:  # pragma: no cover - defensive, should not happen
-        df = pd.DataFrame()
-
-    if df.empty:
-        return df
-
-    # Standardise column names if needed
-    if "recipient" in df.columns and "email" not in df.columns:
-        df = df.rename(columns={"recipient": "email"})
-    if "campaign" in df.columns and "campaign_id" not in df.columns:
-        df = df.rename(columns={"campaign": "campaign_id"})
+    with get_connection(str(db_path)) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "send_log" in tables:
+            df = pd.read_sql_query(
+                "SELECT campaign_id, msg_id, email, send_ts FROM send_log",
+                conn,
+            )
+        elif "email_map" in tables:
+            df = pd.read_sql_query(
+                "SELECT msg_id, recipient AS email FROM email_map", conn
+            )
+        else:
+            return pd.DataFrame()
 
     return df
 
@@ -162,28 +162,24 @@ def load_user_signups(path: Optional[Path] = None) -> pd.DataFrame:
 def load_all_data(
     events_db: str, sends_db: str, campaigns_db: str
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load core tables from the three analytics databases.
+    """Load and harmonise data from the three analytics databases.
 
-    Parameters
-    ----------
-    events_db:
-        Path to the database containing ``event_log``.
-    sends_db:
-        Path to the database containing ``send_log``.
-    campaigns_db:
-        Path to the database containing ``campaigns`` and ``user_signup``.
+    The function expects the following schemas:
+
+    ``events``
+        Columns ``msg_id``, ``event_type``, ``client_ip``, ``ts`` and
+        ``campaign``.
+    ``email_map``
+        Columns ``msg_id`` and ``recipient``.
+    ``campaigns`` and ``user_signup``
+        Linked via ``campaign_id``.
 
     Returns
     -------
     Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
-        DataFrames for events, sends, campaigns and signups respectively,
-        with column structures::
-
-            events   (campaign_id, msg_id, event_type, event_ts)
-            sends    (campaign_id, msg_id, email, send_ts)
-            campaigns(campaign_id, name, start_date, end_date, budget)
-            signups  (signup_id, campaign_id, client_name, email)
+        DataFrames for events, sends, campaigns and signups respectively.
     """
+
     for path_str in (events_db, sends_db, campaigns_db):
         if not Path(path_str).exists():
             raise FileNotFoundError(f"Database not found: {path_str}")
@@ -196,15 +192,22 @@ def load_all_data(
     if "event_ts" not in events.columns and "ts" in events.columns:
         events = events.rename(columns={"ts": "event_ts"})
 
-    if "campaign_id" not in events.columns and "campaign" in events.columns:
-        events = events.rename(columns={"campaign": "campaign_id"})
-
+    # Attach campaign information to sends and email addresses to events
     if not sends.empty:
         if "email" not in sends.columns and "recipient" in sends.columns:
             sends = sends.rename(columns={"recipient": "email"})
-        if "campaign_id" not in sends.columns:
+        if (
+            "campaign_id" in events.columns and
+            "campaign_id" not in sends.columns
+        ):
             sends = sends.merge(
                 events[["msg_id", "campaign_id"]].drop_duplicates(),
+                on="msg_id",
+                how="left",
+            )
+        if "campaign" in events.columns and "campaign" not in sends.columns:
+            sends = sends.merge(
+                events[["msg_id", "campaign"]].drop_duplicates(),
                 on="msg_id",
                 how="left",
             )
@@ -213,9 +216,29 @@ def load_all_data(
                 sends[["msg_id", "email"]], on="msg_id", how="left"
             )
 
-    cols = ["campaign_id", "msg_id", "event_type", "event_ts"]
-    if "email" in events.columns:
-        cols.append("email")
-    campaigns = load_campaigns(Path(campaigns_db))
-    signups = load_user_signups(Path(campaigns_db))
+    # Reduce event columns to essentials
+    keep_cols = [
+        c
+        for c in [
+            "campaign_id",
+            "campaign",
+            "msg_id",
+            "event_type",
+            "event_ts",
+            "email",
+        ]
+        if c in events.columns
+    ]
+    events = events[keep_cols]
+
+    campaigns = _safe_read_query(
+        Path(campaigns_db), "SELECT campaign_id, name FROM campaigns"
+    )
+
+    signups = _safe_read_query(
+        Path(campaigns_db),
+        "SELECT signup_id, campaign_id, client_name, email FROM user_signup",
+    ).merge(campaigns, on="campaign_id", how="left")
+    signups = signups.rename(columns={"name": "campaign"})
+
     return events, sends, campaigns, signups

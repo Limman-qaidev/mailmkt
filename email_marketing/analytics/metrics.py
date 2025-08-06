@@ -10,6 +10,10 @@ def compute_campaign_metrics(
 ) -> pd.DataFrame:
     """Compute per-campaign counts and rates of engagement events.
 
+    The three input DataFrames must share a common campaign identifier.  This
+    can either be a ``campaign_id`` column or a human readable ``campaign``
+    name.  The function automatically picks whichever is available.
+
     Parameters
     ----------
     sends:
@@ -26,8 +30,10 @@ def compute_campaign_metrics(
         unsubscribes, complaints and signups, along with corresponding rates.
     """
 
+    group_col = "campaign_id" if "campaign_id" in sends.columns else "campaign"
+
     send_counts = sends.groupby(
-        "campaign_id"
+        group_col
         )["msg_id"].nunique().rename("N_sends")
 
     if events.empty:
@@ -35,7 +41,7 @@ def compute_campaign_metrics(
     else:
         event_counts = (
             events.pivot_table(
-                index="campaign_id",
+                index=group_col,
                 columns="event_type",
                 values="msg_id",
                 aggfunc="nunique",
@@ -51,7 +57,7 @@ def compute_campaign_metrics(
         )
 
     signup_counts = (
-        signups.groupby("campaign_id")[
+        signups.groupby(group_col)[
             "signup_id"
             ].nunique().rename("N_signups")
         if not signups.empty
@@ -59,15 +65,15 @@ def compute_campaign_metrics(
     )
 
     open_signups = (
-        events.loc[events["event_type"] == "open", ["campaign_id", "email"]]
+        events.loc[events["event_type"] == "open", [group_col, "email"]]
         .dropna(subset=["email"])
         .merge(
-            signups[["campaign_id", "email"]],
-            on=["campaign_id", "email"],
+            signups[[group_col, "email"]],
+            on=[group_col, "email"],
             how="inner",
         )
         .drop_duplicates()
-        .groupby("campaign_id")
+        .groupby(group_col)
         .size()
         .rename("N_open_signups")
         if "email" in events.columns and not events.empty and not signups.empty
@@ -95,6 +101,7 @@ def compute_campaign_metrics(
             "N_unsubscribes": int,
             "N_complaints": int,
             "N_signups": int,
+            "N_open_signups": int,
         }
     )
 

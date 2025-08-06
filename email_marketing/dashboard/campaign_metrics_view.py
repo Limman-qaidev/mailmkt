@@ -26,7 +26,8 @@ def render_campaign_metrics_view() -> None:
     """st.sidebar.subheader("Database paths")
     events_path = st.sidebar.text_input("Events DB", default_events)
     sends_path = st.sidebar.text_input("Sends DB", default_sends)
-    campaigns_path = st.sidebar.text_input("Campaigns DB", default_campaigns)"""
+    campaigns_path = st.sidebar.text_input("Campaigns DB", default_campaigns)
+    """
 
     try:
         events, sends, campaigns, signups = db.load_all_data(
@@ -37,6 +38,14 @@ def render_campaign_metrics_view() -> None:
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to load data: {exc}")
         return
+    events = events.merge(
+        sends, on="msg_id", how='left', suffixes=('', '_send')
+        )
+    events = events.merge(
+        campaigns, left_on="campaign", right_on="name",
+        how='left', suffixes=('', '_campaign')
+    )
+    events['event_ts'] = pd.to_datetime(events['event_ts'], errors='raise')
 
     if campaigns.empty:
         st.info("No campaign data available.")
@@ -46,36 +55,42 @@ def render_campaign_metrics_view() -> None:
         sends=sends, events=events, signups=signups
     )
 
+    # Create a mapping of campaign IDs to names for selection
     campaign_options = {
-        row["campaign_id"]: f"{row['campaign_id']} – {row['name']}"
+        row["campaign_id"]: f"{row['name']}"
         for _, row in campaigns.iterrows()
     }
 
+    # Create a selection box for campaigns
     selection = st.selectbox(
         "Select Campaign",
         list(campaign_options.values()),
     )
+
+    # Get the selected campaign ID
     selected_id = next(
         cid for cid, label in campaign_options.items() if label == selection
     )
 
     info_tab, metrics_tab = st.tabs(["Campaign Info", "Metrics"])
 
-    campaign_row = campaigns[campaigns["campaign_id"] == selected_id].iloc[0]
+    # Select campaign data
+    campaign_data = events[events["campaign_id"] == selected_id]
+    start_date = campaign_data["event_ts"].min()
+    end_date = campaign_data["event_ts"].max()
 
     with info_tab:
         info = {
-            "name": campaign_row.get("name"),
-            "start_date": campaign_row.get("start_date"),
-            "end_date": campaign_row.get("end_date"),
-            "budget": campaign_row.get("budget"),
+            "name": selection,
+            "start_date": start_date,
+            "end_date": end_date,
         }
         st.write(info)
 
     # Plot using Streamlit's built-in bar chart for quick visualisation.
     with metrics_tab:
-        if selected_id in metrics_df.index:
-            st.dataframe(metrics_df.loc[[selected_id]].reset_index())
+        if selection in metrics_df.index:
+            st.dataframe(metrics_df.loc[[selection]].reset_index())
         else:
             st.info("No metrics for selected campaign.")
 

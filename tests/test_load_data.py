@@ -11,16 +11,16 @@ def _create_events_db(path: Path) -> None:
     conn = sqlite3.connect(path)
     cur = conn.cursor()
     cur.execute(
-        "CREATE TABLE events (campaign_id TEXT, msg_id TEXT, "
-        "event_type TEXT, event_ts TIMESTAMP)"
+        "CREATE TABLE events (msg_id TEXT, event_type TEXT, "
+        "client_ip TEXT, ts TIMESTAMP, campaign TEXT)"
     )
     cur.executemany(
         "INSERT INTO events VALUES (?,?,?,?)",
         [
-            ("c1", "m1", "open", "2020-01-01 00:00:00"),
-            ("c1", "m1", "click", "2020-01-01 00:01:00"),
-            ("c1", "m1", "unsubscribe", "2020-01-01 00:02:00"),
-            ("c1", "m1", "complaint", "2020-01-01 00:03:00"),
+            ("m1", "open", "1.1.1.1", "2020-01-01 00:00:00", "Test"),
+            ("m1", "click", "1.1.1.1", "2020-01-01 00:01:00", "Test"),
+            ("m1", "unsubscribe", "1.1.1.1", "2020-01-01 00:02:00", "Test"),
+            ("m1", "complaint", "1.1.1.1", "2020-01-01 00:03:00", "Test"),
         ],
     )
     conn.commit()
@@ -31,12 +31,12 @@ def _create_sends_db(path: Path) -> None:
     conn = sqlite3.connect(path)
     cur = conn.cursor()
     cur.execute(
-        "CREATE TABLE send_log (campaign_id TEXT, msg_id TEXT, "
-        "email TEXT, send_ts TIMESTAMP)"
+        "CREATE TABLE email_map ( msg_id TEXT PRIMARY KEY, "
+        "recipient TEXT NOT NULL)"
     )
     cur.execute(
-        "INSERT INTO send_log VALUES (?,?,?,?)",
-        ("c1", "m1", "a@example.com", "2020-01-01 00:00:00"),
+        "INSERT INTO email_map VALUES (?,?)",
+        ("m1", "a@example.com"),
     )
     conn.commit()
     conn.close()
@@ -46,19 +46,18 @@ def _create_campaigns_db(path: Path) -> None:
     conn = sqlite3.connect(path)
     cur = conn.cursor()
     cur.execute(
-        "CREATE TABLE campaigns (campaign_id TEXT, name TEXT, "
-        "start_date TEXT, end_date TEXT, budget REAL)"
+        "CREATE TABLE campaigns (campaign_id TEXT, name TEXT)"
     )
     cur.execute(
         "CREATE TABLE user_signup (signup_id TEXT, campaign_id TEXT, "
         "client_name TEXT, email TEXT)"
     )
     cur.execute(
-        "INSERT INTO campaigns VALUES (?,?,?,?,?)",
-        ("c1", "Test", "2020-01-01", "2020-01-02", 100.0),
+        "INSERT INTO campaigns VALUES (?,?)",
+        ("c1", "Test"),
     )
     cur.execute(
-        "INSERT INTO user_signup VALUES (?,?,?)",
+        "INSERT INTO user_signup VALUES (?,?,?, ?)",
         ("s1", "c1", "Alice", "a@example.com"),
     )
     conn.commit()
@@ -79,11 +78,19 @@ def test_load_all_data(tmp_path: Path) -> None:
     )
 
     assert not events.empty
-    assert "campaign_id" in events.columns
+    assert "campaign" in events.columns
+    assert "email" in events.columns
     assert not sends.empty
+    assert "campaign" in sends.columns
     assert not campaigns.empty
 
     metrics_df = metrics.compute_campaign_metrics(sends, events, signups)
     assert "open_rate" in metrics_df.columns
-    assert metrics_df.loc["c1", "N_open_signups"] == 1
-    assert metrics_df.loc["c1", "open_signup_rate"] == 1.0
+    assert metrics_df.loc["Test", "N_open_signups"] == 1
+    assert metrics_df.loc["Test", "open_signup_rate"] == 1.0
+
+
+def test_default_data_dir() -> None:
+    """The analytics module should look for databases under the package."""
+    expected = Path(db.__file__).resolve().parent.parent / "data"
+    assert db.DATA_DIR == expected

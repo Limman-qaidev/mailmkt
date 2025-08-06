@@ -1,9 +1,10 @@
 # Campaign analytics module
 
-This view analyses campaign performance by combining three SQLite databases:
+This view analyses campaign performance by combining three SQLite databases
+stored under ``email_marketing/data``:
 
 - `email_events.db`
-- `email_map_old.db`
+- `email_map.db`
 - `campaigns.db`
 
 ## Running
