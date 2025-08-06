@@ -23,14 +23,16 @@ def render_campaign_metrics_view() -> None:
 
     default_events, default_sends, default_campaigns = _default_db_paths()
 
-    st.sidebar.subheader("Database paths")
+    """st.sidebar.subheader("Database paths")
     events_path = st.sidebar.text_input("Events DB", default_events)
     sends_path = st.sidebar.text_input("Sends DB", default_sends)
-    campaigns_path = st.sidebar.text_input("Campaigns DB", default_campaigns)
+    campaigns_path = st.sidebar.text_input("Campaigns DB", default_campaigns)"""
 
     try:
         events, sends, campaigns, signups = db.load_all_data(
-            events_path, sends_path, campaigns_path
+            default_events,
+            default_sends,
+            default_campaigns
         )
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to load data: {exc}")

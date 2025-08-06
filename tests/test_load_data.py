@@ -17,10 +17,10 @@ def _create_events_db(path: Path) -> None:
     cur.executemany(
         "INSERT INTO events VALUES (?,?,?,?)",
         [
-            ("m1", "open", "2020-01-01 00:00:00"),
-            ("m1", "click", "2020-01-01 00:01:00"),
-            ("m1", "unsubscribe", "2020-01-01 00:02:00"),
-            ("m1", "complaint", "2020-01-01 00:03:00"),
+            ("c1", "m1", "open", "2020-01-01 00:00:00"),
+            ("c1", "m1", "click", "2020-01-01 00:01:00"),
+            ("c1", "m1", "unsubscribe", "2020-01-01 00:02:00"),
+            ("c1", "m1", "complaint", "2020-01-01 00:03:00"),
         ],
     )
     conn.commit()
@@ -85,3 +85,5 @@ def test_load_all_data(tmp_path: Path) -> None:
 
     metrics_df = metrics.compute_campaign_metrics(sends, events, signups)
     assert "open_rate" in metrics_df.columns
+    assert metrics_df.loc["c1", "N_open_signups"] == 1
+    assert metrics_df.loc["c1", "open_signup_rate"] == 1.0

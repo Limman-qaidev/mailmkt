@@ -15,10 +15,10 @@ from typing import Optional, Tuple
 import pandas as pd
 
 # Paths to the existing SQLite databases
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 EVENTS_DB = DATA_DIR / "email_events.db"
-MAP_DB = DATA_DIR / "email_map_old.db"
+MAP_DB = DATA_DIR / "email_map.db"
 CAMPAIGNS_DB = DATA_DIR / "campaigns.db"
 
 LOGGER = logging.getLogger(__name__)
@@ -84,13 +84,38 @@ def load_event_log(path: Optional[Path] = None) -> pd.DataFrame:
 def load_send_log(path: Optional[Path] = None) -> pd.DataFrame:
     """Load the send log mapping ``msg_id`` to recipients and campaigns.
 
-    The table is expected to expose ``campaign_id``, ``msg_id`` and
-    ``email`` columns.  Missing tables yield an empty DataFrame.
+    The schema of the underlying table can vary between deployments.  We
+    therefore attempt a couple of known options and normalise the result to
+    expose at least ``msg_id`` and ``email`` columns.  If no recognised table
+    is found, an empty :class:`~pandas.DataFrame` is returned.
     """
+
     db_path = path or MAP_DB
-    return _safe_read_query(
-        db_path, "SELECT campaign_id, msg_id, email, send_ts FROM send_log"
-    )
+
+    queries = [
+        "SELECT campaign_id, msg_id, email, send_ts FROM email_map",
+        "SELECT msg_id, recipient AS email FROM email_map",
+    ]
+
+    for query in queries:
+        try:
+            df = _safe_read_query(db_path, query)
+            break
+        except sqlite3.DatabaseError:
+            df = pd.DataFrame()
+    else:  # pragma: no cover - defensive, should not happen
+        df = pd.DataFrame()
+
+    if df.empty:
+        return df
+
+    # Standardise column names if needed
+    if "recipient" in df.columns and "email" not in df.columns:
+        df = df.rename(columns={"recipient": "email"})
+    if "campaign" in df.columns and "campaign_id" not in df.columns:
+        df = df.rename(columns={"campaign": "campaign_id"})
+
+    return df
 
 
 def load_campaigns(path: Optional[Path] = None) -> pd.DataFrame:
@@ -101,7 +126,17 @@ def load_campaigns(path: Optional[Path] = None) -> pd.DataFrame:
     returned.
     """
     db_path = path or CAMPAIGNS_DB
-    return _safe_read_query(db_path, "SELECT * FROM campaigns")
+    try:
+        return _safe_read_query(
+            db_path,
+            "SELECT campaign_id, name, start_date, end_date, budget "
+            "FROM campaigns",
+        )
+    except (sqlite3.DatabaseError, pd.errors.DatabaseError):
+        LOGGER.warning("campaigns table missing in %s", db_path)
+        return pd.DataFrame(
+            columns=["campaign_id", "name", "start_date", "end_date", "budget"]
+        )
 
 
 def load_user_signups(path: Optional[Path] = None) -> pd.DataFrame:
@@ -111,7 +146,17 @@ def load_user_signups(path: Optional[Path] = None) -> pd.DataFrame:
     ``campaign_id``.  Missing tables yield an empty DataFrame.
     """
     db_path = path or CAMPAIGNS_DB
-    return _safe_read_query(db_path, "SELECT * FROM user_signup")
+    try:
+        return _safe_read_query(
+            db_path,
+            "SELECT signup_id, campaign_id, client_name, email "
+            "FROM user_signup",
+        )
+    except (sqlite3.DatabaseError, pd.errors.DatabaseError):
+        LOGGER.warning("user_signup table missing in %s", db_path)
+        return pd.DataFrame(
+            columns=["signup_id", "campaign_id", "client_name", "email"]
+        )
 
 
 def load_all_data(
@@ -145,34 +190,32 @@ def load_all_data(
 
     # Load raw tables
     events = _safe_read_query(Path(events_db), "SELECT * FROM events")
-    sends = _safe_read_query(
-        Path(sends_db),
-        "SELECT campaign_id, msg_id, email, send_ts FROM send_log",
-    )
+    sends = load_send_log(Path(sends_db))
 
-    # Normalise event timestamp column name
+    # Normalise column names
     if "event_ts" not in events.columns and "ts" in events.columns:
         events = events.rename(columns={"ts": "event_ts"})
 
-    # If campaign information is missing from the events table, join it from
-    # the send log using ``msg_id``.
-    if "campaign_id" not in events.columns:
-        events = events.merge(
-            sends[["campaign_id", "msg_id"]],
-            on="msg_id",
-            how="left",
-        )
+    if "campaign_id" not in events.columns and "campaign" in events.columns:
+        events = events.rename(columns={"campaign": "campaign_id"})
 
-    events = events[["campaign_id", "msg_id", "event_type", "event_ts"]]
-    campaigns = _safe_read_query(
-        Path(campaigns_db),
-        (
-            "SELECT campaign_id, name, start_date, end_date, budget "
-            "FROM campaigns"
-        ),
-    )
-    signups = _safe_read_query(
-        Path(campaigns_db),
-        "SELECT signup_id, campaign_id, client_name, email FROM user_signup",
-    )
+    if not sends.empty:
+        if "email" not in sends.columns and "recipient" in sends.columns:
+            sends = sends.rename(columns={"recipient": "email"})
+        if "campaign_id" not in sends.columns:
+            sends = sends.merge(
+                events[["msg_id", "campaign_id"]].drop_duplicates(),
+                on="msg_id",
+                how="left",
+            )
+        if "email" not in events.columns:
+            events = events.merge(
+                sends[["msg_id", "email"]], on="msg_id", how="left"
+            )
+
+    cols = ["campaign_id", "msg_id", "event_type", "event_ts"]
+    if "email" in events.columns:
+        cols.append("email")
+    campaigns = load_campaigns(Path(campaigns_db))
+    signups = load_user_signups(Path(campaigns_db))
     return events, sends, campaigns, signups

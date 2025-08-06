@@ -58,13 +58,32 @@ def compute_campaign_metrics(
         else pd.Series(dtype=int, name="N_signups")
     )
 
-    metrics = pd.concat([send_counts, event_counts, signup_counts], axis=1)
+    open_signups = (
+        events.loc[events["event_type"] == "open", ["campaign_id", "email"]]
+        .dropna(subset=["email"])
+        .merge(
+            signups[["campaign_id", "email"]],
+            on=["campaign_id", "email"],
+            how="inner",
+        )
+        .drop_duplicates()
+        .groupby("campaign_id")
+        .size()
+        .rename("N_open_signups")
+        if "email" in events.columns and not events.empty and not signups.empty
+        else pd.Series(dtype=int, name="N_open_signups")
+    )
+
+    metrics = pd.concat(
+        [send_counts, event_counts, signup_counts, open_signups], axis=1
+    )
     for col in [
         "N_opens",
         "N_clicks",
         "N_unsubscribes",
         "N_complaints",
         "N_signups",
+        "N_open_signups",
     ]:
         if col not in metrics:
             metrics[col] = 0
@@ -92,5 +111,8 @@ def compute_campaign_metrics(
     metrics["signup_rate"] = metrics["N_signups"] / metrics["N_sends"].where(
         metrics["N_sends"] > 0, 1
     )
+    metrics["open_signup_rate"] = metrics["N_open_signups"] / metrics[
+        "N_opens"
+    ].where(metrics["N_opens"] > 0, 1)
 
     return metrics
