@@ -19,8 +19,8 @@ import pandas as pd
 import streamlit as st
 
 from email_marketing.ab_testing import assign_variant
-from email_marketing.analytics import calibration
-from email_marketing.analytics import model as analytics_model
+# from email_marketing.analytics import calibration
+# from email_marketing.analytics import model as analytics_model
 from email_marketing.analytics.recommend import get_distribution_list
 
 # Uncomment if needed add MailgunSender
@@ -76,9 +76,9 @@ def render_email_editor() -> None:
         campaign_id = st.text_input(
             "Campaign ID",
             help="Identifier of the campaign used to "
-            "build the recommendation list.",
+            "build the campaign list.",
         )
-        threshold = st.slider(
+        """threshold = st.slider(
             "Recommendation threshold",
             min_value=0.0,
             max_value=1.0,
@@ -88,10 +88,10 @@ def render_email_editor() -> None:
                 "Minimum probability required to include a recipient in the "
                 "recommended list."
                 ),
-        )
+        )"""
         if st.button("Preview") and campaign_id:
             try:
-                recipients = get_distribution_list(campaign_id, threshold)
+                recipients = get_distribution_list(campaign_id, 1.0)
                 st.success(
                     f"Loaded {len(recipients)} recommended recipients."
                 )
@@ -127,13 +127,13 @@ def render_email_editor() -> None:
     # 3) Choose sender and analytics actions
     # Uncomment if needed adding MailgunSender
     # sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
-    st.sidebar.subheader("Analytics")
+    """st.sidebar.subheader("Analytics")
     if st.sidebar.button("Recalculate weights"):
         calibration.recalculate_weights()
         st.sidebar.success("Weights recalibrated")
     if st.sidebar.button("Retrain model"):
         analytics_model.train_model()
-        st.sidebar.success("Model trained")
+        st.sidebar.success("Model trained")"""
     send_button = st.button(
         "Send Email", disabled=not recipients or not html_body
         )
