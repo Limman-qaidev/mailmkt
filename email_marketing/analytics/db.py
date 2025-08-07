@@ -232,12 +232,12 @@ def load_all_data(
     events = events[keep_cols]
 
     campaigns = _safe_read_query(
-        Path(campaigns_db), "SELECT campaign_id, name FROM campaigns"
+        Path(campaigns_db), "SELECT * FROM campaigns"
     )
 
     signups = _safe_read_query(
         Path(campaigns_db),
-        "SELECT signup_id, campaign_id, client_name, email FROM user_signup",
+        "SELECT * FROM user_signup",
     ).merge(campaigns, on="campaign_id", how="left")
     signups = signups.rename(columns={"name": "campaign"})
 

@@ -61,20 +61,24 @@ def render_campaign_metrics_view() -> None:
         campaign_id = selected
 
         with info_tab:
-            campaign_row = events[events["campaign"] == campaign_id]
+            selected_campaign_info = campaigns[
+                campaigns["name"] == campaign_id
+                ]
             if campaign_id not in metrics_df.index:
                 st.warning("Campaign not found")
             else:
                 info = {
                     'name': campaign_id,
-                    'start_date': campaign_row['event_ts'].min(),
-                    'end_date': campaign_row['event_ts'].max(),
+                    'start_date': selected_campaign_info[
+                        'start_date'
+                        ].values[0],
+                    'end_date': selected_campaign_info['end_date'].values[0],
+                    'budget': selected_campaign_info['budget'].values[0],
                 }
 
-                start = info["start_date"]
-                end = info["end_date"]
+                start = pd.to_datetime(info["start_date"])
+                end = pd.to_datetime(info["end_date"])
                 budget = f"${info.get('budget', 0):,.0f}"
-
                 # 2. KPI cards
                 k1, k2, k3, k4 = st.columns([2, 1, 1, 1])
                 k1.metric("📣 Campaign", info["name"])
@@ -82,7 +86,7 @@ def render_campaign_metrics_view() -> None:
                 k3.metric("📅 End Date", end.strftime("%Y-%m-%d"))
                 k4.metric("💰 Budget", budget)
 
-                # 3. Timeline
+                """# 3. Timeline
                 df_tl = pd.DataFrame([{
                     "Campaign": info["name"],
                     "Start": start,
@@ -92,7 +96,7 @@ def render_campaign_metrics_view() -> None:
                     df_tl, x_start="Start", x_end="End", y="Campaign"
                     )
                 fig_tl.update_yaxes(visible=False)
-                st.plotly_chart(fig_tl, use_container_width=True)
+                st.plotly_chart(fig_tl, use_container_width=True)"""
 
                 # 4. Progress Bar
                 total_days = (end - start).days
@@ -111,7 +115,6 @@ def render_campaign_metrics_view() -> None:
                 st.warning("No metrics available for this campaign")
             else:
                 campaign_events = events[events["campaign"] == campaign_id]
-
                 open_events = campaign_events[
                     campaign_events["event_type"] == "open"
                     ]
@@ -132,14 +135,12 @@ def render_campaign_metrics_view() -> None:
                     .nunique()
                     .rename("daily_clicks")
                 )
-                signup_events = campaign_events[
-                    campaign_events["event_type"] == "signup"
-                    ]
+                signup_events = signups[signups['campaign'] == campaign_id]
                 daily_signups = (
                     signup_events.assign(
-                        date=signup_events["event_ts"].dt.date
+                        date=signup_events["signup_ts"].dt.date
                         )
-                    .groupby("date")["msg_id"]
+                    .groupby("date")["signup_id"]
                     .nunique()
                     .rename("daily_signups")
                     if not signup_events.empty
@@ -167,7 +168,7 @@ def render_campaign_metrics_view() -> None:
                     go.Indicator(
                         mode="gauge+number+delta",
                         value=m["open_rate"],
-                        delta={"reference": 0, "relative": True},
+                        delta={"reference": 0, "relative": False},
                         gauge={"axis": {"range": [0, 1]}},
                         title={"text": "Open Rate"},
                     )
@@ -178,7 +179,7 @@ def render_campaign_metrics_view() -> None:
                     go.Indicator(
                         mode="gauge+number+delta",
                         value=m["click_rate"],
-                        delta={"reference": 0, "relative": True},
+                        delta={"reference": 0, "relative": False},
                         gauge={"axis": {"range": [0, 1]}},
                         title={"text": "Click Rate"},
                     )
@@ -189,7 +190,7 @@ def render_campaign_metrics_view() -> None:
                     go.Indicator(
                         mode="gauge+number+delta",
                         value=m["signup_rate"],
-                        delta={"reference": 0, "relative": True},
+                        delta={"reference": 0, "relative": False},
                         gauge={"axis": {"range": [0, 1]}},
                         title={"text": "Signup Rate"},
                     )
@@ -200,16 +201,17 @@ def render_campaign_metrics_view() -> None:
                     go.Indicator(
                         mode="gauge+number+delta",
                         value=m["unsubscribe_rate"],
-                        delta={"reference": 0, "relative": True},
+                        delta={"reference": 0, "relative": False},
                         gauge={"axis": {"range": [0, 1]}},
                         title={"text": "Unsubscribe Rate"},
                     )
                 )
                 k4.plotly_chart(fig, use_container_width=True)
                 st.subheader("Daily Engagement Over Time")
+                daily_df = daily_df.sort_values("date").reindex()
                 fig_ts = px.line(
                     daily_df,
-                    x="index",
+                    x=daily_df.date,
                     y=["daily_opens", "daily_clicks", "daily_signups"],
                     labels={"value": "Count", "index": "Date"},
                     title="Daily Opens, Clicks, and Signups",
@@ -237,6 +239,40 @@ def render_campaign_metrics_view() -> None:
             "Metric to compare",
             ["open_rate", "click_rate", "signup_rate", "unsubscribe_rate"],
         )
+
+        with info_tab:
+            # Filtramos todas las campañas seleccionadas
+            sel = campaigns[campaigns["name"].isin(campaign_ids)]
+            if sel.empty:
+                st.warning("No campaign data found")
+            else:
+                # For each campaign, we print the KPI cards just like in
+                #  single mode
+                for _, row in sel.iterrows():
+                    name = row["name"]
+                    start = pd.to_datetime(row["start_date"])
+                    end = pd.to_datetime(row["end_date"])
+                    budget_str = f"${row['budget']:,.0f}"
+
+                    st.markdown(f"### 📣 {name}")
+                    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+                    c1.metric("Campaign", name)
+                    c2.metric("Start Date", start.strftime("%Y-%m-%d"))
+                    c3.metric("End Date",   end.strftime("%Y-%m-%d"))
+                    c4.metric("💰 Budget",  budget_str)
+
+                    # Progress bar
+                    total_days = (end - start).days
+                    elapsed = (datetime.utcnow() - start).days
+                    pct = (
+                        max(0, min(100, int(100 * elapsed / total_days)))
+                        if total_days > 0
+                        else 0
+                    )
+                    st.progress(pct)
+                    st.caption(
+                        f"{pct}% complete ({elapsed}/{total_days} days)"
+                        )
 
         with metrics_tab:
             cmp_df = metrics_df.reset_index()
@@ -266,6 +302,20 @@ def render_campaign_metrics_view() -> None:
             for cid in campaign_ids:
                 send_ts = df[df["campaign"] == cid]["event_ts"].min()
                 ev = df[df["campaign"] == cid]
+                signup_events = signups[signups["campaign"] == cid]
+                signup_ev = pd.DataFrame(
+                        {
+                         'campaign': cid,
+                         'msg_id': signup_events['signup_id'],
+                         'event_type': 'signup',
+                         'event_ts': signup_events['signup_ts'],
+                         'email': signup_events['email'],
+                         'email_send': signup_events['email'],
+                         'campaign_send': signup_events['campaign']
+                        }
+                )
+                ev = pd.concat([ev, signup_ev], ignore_index=True)
+
                 ev = ev.assign(days_since=((ev["event_ts"] - send_ts).dt.days))
                 daily = (
                     ev.groupby(["days_since", "event_type"])
@@ -280,7 +330,7 @@ def render_campaign_metrics_view() -> None:
                 ).reset_index()
                 daily["campaign_id"] = cid
                 df_list.append(daily)
-            ts_df = pd.concat(df_list, ignore_index=True)
+            ts_df = pd.concat(df_list, ignore_index=True).fillna(0)
 
             st.subheader("Normalized Daily Engagement")
             fig_ts_cmp = px.line(

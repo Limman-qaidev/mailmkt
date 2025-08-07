@@ -199,7 +199,6 @@ def render_stats_view() -> None:
 
     # 3) Load events
     events = _load_events().drop_duplicates(subset=["msg_id", "event_type"])
-
     # 4) Load mapping (msg_id → send_ts) into map_df
     map_db_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
