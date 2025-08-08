@@ -211,7 +211,7 @@ def render_campaign_metrics_view() -> None:
                     m["N_sends"],
                     m["N_opens"],
                     m["N_clicks"],
-                    m["N_signups"],
+                    m["N_signups_attr"],
                 ]
                 funnel_steps = ["Sent", "Opened", "Clicked", "Signed Up"]
 
@@ -231,10 +231,11 @@ def render_campaign_metrics_view() -> None:
                 fig = go.Figure(
                     go.Indicator(
                         mode="gauge+number+delta",
-                        value=m["click_rate"],
+                        value=m["ctr"],
                         delta={"reference": 0, "relative": False},
                         gauge={"axis": {"range": [0, 1]}},
-                        title={"text": "Click Rate"},
+                        # title={"text": "Click Rate"},
+                        title={"text": "CTR"}
                     )
                 )
                 k2.plotly_chart(fig, use_container_width=True)
@@ -290,7 +291,8 @@ def render_campaign_metrics_view() -> None:
             return
         metric = st.sidebar.selectbox(
             "Metric to compare",
-            ["open_rate", "click_rate", "signup_rate", "unsubscribe_rate"],
+            # ["open_rate", "click_rate", "signup_rate", "unsubscribe_rate"],
+            ["open_rate", "ctr", "signup_rate", "unsubscribe_rate"],
         )
 
         with info_tab:
@@ -386,14 +388,23 @@ def render_campaign_metrics_view() -> None:
             ts_df = pd.concat(df_list, ignore_index=True).fillna(0)
 
             st.subheader("Normalized Daily Engagement")
+            event_map = {
+                "open_rate": "open",
+                "ctr": "click",
+                "signup_rate": "signup",
+                "unsubscribe_rate": "unsubscribe",
+            }
+            event_col = event_map.get(metric, metric.split("_")[0])
             fig_ts_cmp = px.line(
                 ts_df,
                 x="days_since",
-                y=metric.split("_")[0],
+                # y=metric.split("_")[0],
+                y=event_col,
                 color="campaign_id",
                 labels={
                     "days_since": "Days Since Launch",
-                    metric.split("_")[0]: "Count",
+                    # metric.split("_")[0]: "Count",
+                    event_col: "Count",
                 },
                 title=f"{metric.replace(
                     '_', ' ').title()} Over Time by Campaign",
