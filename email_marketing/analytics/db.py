@@ -14,6 +14,14 @@ from typing import Optional, Tuple
 
 import pandas as pd
 
+from datetime import datetime
+
+
+def _now_ts() -> str:
+    # Espacio entre fecha y hora; optional microseconds
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 # Paths to the existing SQLite databases
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -34,6 +42,30 @@ def get_connection(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _read_events(events_db: str) -> pd.DataFrame:
+    """
+    Read the events table, tolerating timestamps with 'T' (ISO) and without
+    'T'.
+    Don't use PARSE_DECLTYPES so SQLite doesn't try to convert before we do.
+    """
+    with sqlite3.connect(events_db) as conn:
+        df = pd.read_sql_query(
+            """
+            SELECT
+              msg_id,
+              event_type,
+              client_ip,
+              REPLACE(CAST(ts AS TEXT), 'T', ' ') AS event_ts,
+              campaign
+            FROM events
+            """,
+            conn
+        )
+    # Parse with pandas, which understands both formats
+    df["event_ts"] = pd.to_datetime(df["event_ts"], errors="coerce")
+    return df
 
 
 def _safe_read_query(path: Path, query: str) -> pd.DataFrame:
@@ -185,7 +217,7 @@ def load_all_data(
             raise FileNotFoundError(f"Database not found: {path_str}")
 
     # Load raw tables
-    events = _safe_read_query(Path(events_db), "SELECT * FROM events")
+    events = _read_events(events_db)
     sends = load_send_log(Path(sends_db))
 
     # Normalise column names

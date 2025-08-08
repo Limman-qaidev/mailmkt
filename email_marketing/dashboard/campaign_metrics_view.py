@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import os
 import pandas as pd
 import streamlit as st
 import plotly.express as px
@@ -15,6 +16,11 @@ from analytics.db import load_all_data
 from analytics.metrics import compute_campaign_metrics
 
 
+def _now_ts() -> str:
+    # Espacio entre fecha y hora; optional microseconds
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def _default_db_paths() -> tuple[str, str, str]:
     """Return default locations for the analytics SQLite databases."""
     base_dir = Path(__file__).resolve().parents[1]
@@ -24,6 +30,50 @@ def _default_db_paths() -> tuple[str, str, str]:
         str(data_dir / "email_map.db"),
         str(data_dir / "campaigns.db"),
     )
+
+
+def generate_distribution_list_by_campaign() -> None:
+    """
+    Create a CSV with recipients of a campaign who have not unsubscribed,
+    complained, or marked the email as spam/deleted.
+    """
+    events_db, sends_db, campaigns_db = _default_db_paths()
+    try:
+        events, _, campaigns, _ = load_all_data(
+            events_db, sends_db, campaigns_db
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        st.error(f"Failed to load data: {exc}")
+        return
+
+    campaign_options = campaigns["name"].values
+    mail_discard = events[events["event_type"].isin([
+        "unsubscribe",
+        "complaint",
+        "deleted_or_spam",
+    ])].loc[:, ['campaign', 'email']]
+    ev = events[~events["event_type"].isin(
+        [
+            "unsubscribe",
+            "complaint",
+            "deleted_or_spam",
+            "send"
+        ]
+    )]
+    patern = Path(__file__).resolve().parents[2] / "data"
+    for campaign in campaign_options:
+        ev_camp = ev[ev["campaign"] == campaign]
+        mail_discard_camp = mail_discard[mail_discard["campaign"] == campaign]
+        dist = ev_camp[~ev_camp["email"].isin(mail_discard_camp["email"])]
+        dist = dist.drop_duplicates(subset=["email"])['email']
+
+        # 4) Guardo resultado
+        if not dist.empty:
+            path = os.path.join(patern, f"distribution_list_{campaign}.csv")
+            if os.path.exists(path):
+                distro = pd.read_csv(path)
+                dist = pd.concat([distro, dist]).drop_duplicates()
+            dist.to_csv(path, index=False)
 
 
 def render_campaign_metrics_view() -> None:
@@ -39,6 +89,9 @@ def render_campaign_metrics_view() -> None:
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to load data: {exc}")
         return
+
+    generate_distribution_list_by_campaign()
+
     events["event_ts"] = pd.to_datetime(events["event_ts"], errors="coerce")
     try:
         metrics_df = compute_campaign_metrics(sends, events, signups)

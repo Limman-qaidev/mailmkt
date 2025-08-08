@@ -11,6 +11,9 @@ from __future__ import annotations
 import os
 import urllib.parse
 import time
+from pathlib import Path
+from datetime import datetime
+import sqlite3
 
 import uuid
 from typing import Any, List, Optional
@@ -26,6 +29,11 @@ from email_marketing.analytics.recommend import get_distribution_list
 # Uncomment if needed add MailgunSender
 # from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
+
+
+def _now_ts() -> str:
+    # Espacio entre fecha y hora; optional microseconds
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 def _load_recipients(upload: Optional[Any]) -> List[str]:
@@ -51,6 +59,67 @@ def _load_recipients(upload: Optional[Any]) -> List[str]:
         if "@" in val:
             emails.append(val.strip())
     return emails
+
+
+def _db_paths_for_send() -> tuple[str, str]:
+    """Devuelve rutas de email_events.db y email_map.db (carpeta /data)."""
+    base_dir = Path(__file__).resolve().parents[1]
+    data_dir = base_dir / "data"
+    events_db = str(data_dir / "email_events.db")
+    email_map_db = str(data_dir / "email_map.db")
+    return events_db, email_map_db
+
+
+def _upsert_email_map(email_map_db: str, msg_id: str, recipient: str,
+                      variant: str | None, ts_str: str) -> None:
+    """
+    Inserta/actualiza fila en email_map.
+    Detecta columnas existentes para ser compatible con tu esquema
+    (con o sin send_ts, con o sin campaign_id).
+    """
+    with sqlite3.connect(email_map_db) as conn:
+        cols = [r[1].lower() for r in conn.execute(
+            "PRAGMA table_info(email_map)"
+            ).fetchall()]
+        has_send_ts = "send_ts" in cols
+
+        if has_send_ts:
+            conn.execute(
+                "INSERT OR REPLACE INTO email_map "
+                "(msg_id, recipient, variant, send_ts) VALUES (?, ?, ?, ?)",
+                (msg_id, recipient, variant, ts_str),
+            )
+        else:
+            # Esquema antiguo sin send_ts
+            conn.execute(
+                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant)"
+                " VALUES (?, ?, ?)",
+                (msg_id, recipient, variant),
+            )
+        conn.commit()
+
+
+def _log_send_event(events_db: str, msg_id: str, campaign: str,
+                    client_ip: str = "0.0.0.0", ts_str: str | None = None
+                    ) -> None:
+    """
+    Inserta el evento 'send' en la tabla events.
+    Usa formato de timestamp 'YYYY-mm-dd HH:MM:SS.SSSSSS' (sin 'T') para
+      evitar el error de pandas/sqlite.
+    """
+    if ts_str is None:
+        ts_str = _now_ts()
+
+    with sqlite3.connect(events_db) as conn:
+        # id es autoincrement, por eso nominamos columnas
+        conn.execute(
+            """
+            INSERT INTO events (msg_id, event_type, client_ip, ts, campaign)
+            VALUES (?, 'send', ?, ?, ?)
+            """,
+            (msg_id, client_ip, ts_str, campaign),
+        )
+        conn.commit()
 
 
 def render_email_editor() -> None:
@@ -183,6 +252,8 @@ def render_email_editor() -> None:
     total = len(recipients)
     progress = st.progress(0.0)
 
+    events_db_path, email_map_db_path = _db_paths_for_send()
+
     for i, email in enumerate(recipients, start=1):
         # Assign variant and generate msg_id
         variant = assign_variant(email)
@@ -260,6 +331,12 @@ def render_email_editor() -> None:
                 subject=subject,
                 variant=variant,
             )
+            ts_str = _now_ts()
+            _log_send_event(events_db_path, msg_id, subject, "0.0.0.0", ts_str)
+            _upsert_email_map(
+                email_map_db_path, msg_id, email, variant, ts_str
+                )
+
         except Exception as exc:
             st.error(f"Failed to send to {email}: {exc}")
 

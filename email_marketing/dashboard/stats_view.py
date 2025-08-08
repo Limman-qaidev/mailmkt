@@ -22,6 +22,11 @@ from pathlib import Path
 from email_marketing.dashboard import style
 
 
+def _now_ts() -> str:
+    # Espacio entre fecha y hora; optional microseconds
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def _load_events() -> pd.DataFrame:
     """
     Load engagement events and merge in the recipient email for each msg_id.

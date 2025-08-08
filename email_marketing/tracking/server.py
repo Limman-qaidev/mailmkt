@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+from datetime import datetime
 import os
 import sqlite3
 import uuid
@@ -23,6 +24,11 @@ from typing import Optional
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr
+
+
+def _now_ts() -> str:
+    # Espacio entre fecha y hora; optional microseconds
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 def _get_db_path() -> str:
@@ -111,7 +117,7 @@ def _record_event(msg_id: str,
                 msg_id,
                 event_type,
                 client_ip,
-                dt.datetime.utcnow().isoformat(),
+                _now_ts(),
                 campaign,
             ),
         )
