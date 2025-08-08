@@ -98,7 +98,6 @@ def render_campaign_metrics_view() -> None:
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to compute metrics: {exc}")
         return
-
     if campaigns.empty:
         st.info("No campaign data available.")
         return
@@ -162,6 +161,7 @@ def render_campaign_metrics_view() -> None:
                 st.caption(f"{pct}% complete ({elapsed}/{total_days} days)")
 
         # Plot using Streamlit's built-in bar chart for quick visualisation.
+        st.write(metrics_df)
         with metrics_tab:
             m = metrics_df.loc[selected, :]
             if m.empty:

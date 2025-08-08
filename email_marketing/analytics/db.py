@@ -14,13 +14,6 @@ from typing import Optional, Tuple
 
 import pandas as pd
 
-from datetime import datetime
-
-
-def _now_ts() -> str:
-    # Espacio entre fecha y hora; optional microseconds
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
-
 
 # Paths to the existing SQLite databases
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -35,11 +28,11 @@ LOGGER = logging.getLogger(__name__)
 def get_connection(path: str) -> sqlite3.Connection:
     """Return a connection to the SQLite database at ``path``.
 
-    The connection uses ``sqlite3.Row`` as the row factory and enables
-    ``PARSE_DECLTYPES`` so SQLite types are converted into appropriate
-    Python objects (e.g. ``datetime``).
+    The connection uses ``sqlite3.Row`` for convenient column access but does
+    not enable any automatic type conversion.  All parsing is deferred to
+    pandas.
     """
-    conn = sqlite3.connect(path, detect_types=sqlite3.PARSE_DECLTYPES)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -52,19 +45,13 @@ def _read_events(events_db: str) -> pd.DataFrame:
     """
     with sqlite3.connect(events_db) as conn:
         df = pd.read_sql_query(
-            """
-            SELECT
-              msg_id,
-              event_type,
-              client_ip,
-              REPLACE(CAST(ts AS TEXT), 'T', ' ') AS event_ts,
-              campaign
-            FROM events
-            """,
-            conn
+            "SELECT msg_id, event_type, client_ip, ts, campaign FROM events",
+            conn,
         )
     # Parse with pandas, which understands both formats
-    df["event_ts"] = pd.to_datetime(df["event_ts"], errors="coerce")
+    df["event_ts"] = pd.to_datetime(
+        df["ts"].str.replace("T", " ", regex=False), errors="coerce"
+        )
     return df
 
 
@@ -141,9 +128,21 @@ def load_send_log(path: Optional[Path] = None) -> pd.DataFrame:
                 conn,
             )
         elif "email_map" in tables:
-            df = pd.read_sql_query(
-                "SELECT msg_id, recipient AS email FROM email_map", conn
-            )
+            cols = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(email_map)"
+                    ).fetchall()
+            }
+            select_cols = ["msg_id", "recipient AS email"]
+            if "variant" in cols:
+                select_cols.append("variant")
+            if "send_ts" in cols:
+                select_cols.append("send_ts")
+            if "campaign" in cols:
+                select_cols.append("campaign")
+            query = "SELECT " + ", ".join(select_cols) + " FROM email_map"
+            df = pd.read_sql_query(query, conn)
         else:
             return pd.DataFrame()
 
@@ -272,5 +271,18 @@ def load_all_data(
         "SELECT * FROM user_signup",
     ).merge(campaigns, on="campaign_id", how="left")
     signups = signups.rename(columns={"name": "campaign"})
+
+    # Después de leer signups
+    if "signup_ts" in signups.columns:
+        signups["signup_ts"] = pd.to_datetime(signups["signup_ts"],
+                                              errors="coerce")
+
+    # Si envías el send_ts desde email_map
+    if "send_ts" in sends.columns:
+        sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
+
+    # Si events trae 'ts' (texto), ya sea aquí o en la vista:
+    if "ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
 
     return events, sends, campaigns, signups

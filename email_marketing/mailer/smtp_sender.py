@@ -37,6 +37,55 @@ from typing import Optional
 from email_marketing.mailer import EmailSender
 
 
+def _now_ts() -> str:
+    """Return UTC timestamp with space separator."""
+    from datetime import datetime
+
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+EVENTS_DB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "data",
+    "email_events.db",
+)
+
+
+def _ensure_events_db() -> None:
+    os.makedirs(os.path.dirname(EVENTS_DB_PATH), exist_ok=True)
+    with sqlite3.connect(EVENTS_DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                msg_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                client_ip TEXT,
+                ts TEXT NOT NULL,
+                campaign TEXT
+            )
+            """,
+        )
+        cols = [row[1] for row in conn.execute(
+            "PRAGMA table_info(events)"
+            ).fetchall()]
+        if "campaign" not in cols:
+            conn.execute("ALTER TABLE events ADD COLUMN campaign TEXT")
+        conn.commit()
+
+
+def _record_send_event(msg_id: str, campaign: str) -> None:
+    _ensure_events_db()
+    with sqlite3.connect(EVENTS_DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO events (msg_id, event_type, client_ip, ts, campaign) "
+            "VALUES (?, 'send', NULL, ?, ?)",
+            (msg_id, _now_ts(), campaign),
+        )
+        conn.commit()
+
+
 class SMTPSender(EmailSender):
     """SMTP implementation of the `EmailSender` interface."""
 
@@ -116,29 +165,32 @@ class SMTPSender(EmailSender):
                     msg_id TEXT PRIMARY KEY,
                     recipient TEXT NOT NULL,
                     variant TEXT,
-                    send_ts DATETIME DEFAULT CURRENT_TIMESTAMP
+                    send_ts TEXT,
+                    campaign TEXT
                 )
-                """
+                """,
             )
             # 2) Detect if send_ts column is missing and add it
-            cur = conn.execute("PRAGMA table_info(email_map)")
-            cols = [row[1] for row in cur.fetchall()]
+            cols = [row[1] for row in conn.execute(
+                "PRAGMA table_info(email_map)"
+                ).fetchall()]
             if "send_ts" not in cols:
-                conn.execute(
-                    "ALTER TABLE email_map ADD COLUMN send_ts DATETIME"
-                )
+                conn.execute("ALTER TABLE email_map ADD COLUMN send_ts TEXT")
+            if "campaign" not in cols:
+                conn.execute("ALTER TABLE email_map ADD COLUMN campaign TEXT")
             conn.commit()
 
-    def _store_mapping(self, msg_id: str,
-                       recipient: str,
-                       variant: Optional[str]) -> None:
+    def _store_mapping(
+        self, msg_id: str, recipient: str, variant: Optional[str],
+        campaign: str
+    ) -> None:
         """Insert or update the mapping and record the send timestamp."""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO email_map "
-                "(msg_id, recipient, variant, send_ts) "
-                "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-                (msg_id, recipient, variant),
+                "(msg_id, recipient, variant, send_ts, campaign) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (msg_id, recipient, variant, _now_ts(), campaign),
             )
             conn.commit()
 
@@ -152,7 +204,7 @@ class SMTPSender(EmailSender):
         variant: Optional[str] = None,
     ) -> None:
         """Send an email via SMTP and record the message mapping."""
-        self._store_mapping(msg_id, recipient, variant)
+        self._store_mapping(msg_id, recipient, variant, subject)
 
         msg = EmailMessage()
         msg["Subject"] = subject
@@ -166,8 +218,7 @@ class SMTPSender(EmailSender):
             msg.set_content(html, subtype="html")
 
         try:
-            # Use SSL or plain SMTP with STARTTLS depending on
-            # configuration.
+            # Use SSL or plain SMTP with STARTTLS depending on configuration.
             if self._use_ssl:
                 smtp_conn: smtplib.SMTP = smtplib.SMTP_SSL(
                     self._host, self._port
@@ -191,6 +242,8 @@ class SMTPSender(EmailSender):
                     f"{self._host}:{self._port}: {exc}"
                 )
             ) from exc
+        else:
+            _record_send_event(msg_id, subject)
 
 
 __all__ = ["SMTPSender"]

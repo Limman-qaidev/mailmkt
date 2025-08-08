@@ -74,6 +74,8 @@ def _init_db() -> None:
             )
             """
         )
+        conn.commit()
+    _ensure_campaign_column()
 
 
 def _record_event(msg_id: str,
