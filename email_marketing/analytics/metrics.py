@@ -119,29 +119,27 @@ def compute_campaign_metrics(
                 }
             )
         )
-    # Attribute signups only when there is a corresponding send
-    if signups.empty or "email" not in signups.columns:
-        signups_attr = pd.DataFrame(columns=[group_col, "email"])
-    else:
+    # Attribute signups only when there is a corresponding send.  Initialise
+    # ``signups_attr`` so that the variable always exists even if ``signups``
+    #  is empty or lacks required columns.
+    signups_attr = pd.DataFrame(columns=[group_col, "email"])
+    if not signups.empty and "email" in signups.columns:
         merge_cols = [
-            c for c in [
-                group_col,
-                "email", "send_ts"
-                ] if c in sends.columns
-            ]
-        signups_attr = signups.merge(
-            sends[merge_cols], on=[group_col, "email"], how="inner"
-        )
-        if (
-            "signup_ts" in signups_attr.columns and
-            "send_ts" in signups_attr.columns
-        ):
-            signups_attr = signups_attr[
-                signups_attr["signup_ts"] >= signups_attr["send_ts"]
-            ]
-        signups_attr = signups_attr.drop_duplicates(
-            subset=[group_col, "email"]
+            c for c in [group_col, "email", "send_ts"] if c in sends.columns
+        ]
+        merge_keys = [c for c in [group_col, "email"] if c in merge_cols]
+        if merge_keys:
+            signups_attr = signups.merge(
+                sends[merge_cols], on=merge_keys, how="inner"
             )
+            if (
+                "signup_ts" in signups_attr.columns
+                and "send_ts" in signups_attr.columns
+            ):
+                signups_attr = signups_attr[
+                    signups_attr["signup_ts"] >= signups_attr["send_ts"]
+                ]
+            signups_attr = signups_attr.drop_duplicates(subset=merge_keys)
     signup_counts = (
         signups_attr.groupby(group_col)["email"].nunique(
         ).rename("N_signups_attr")
