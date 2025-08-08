@@ -79,7 +79,6 @@ def compute_campaign_metrics(
     sends = _normalise_campaign_column(sends, group_col)
     events = _normalise_campaign_column(events, group_col)
     signups = _normalise_campaign_column(signups, group_col)
-
     # Parse timestamps leniently
     if "send_ts" in sends.columns:
         sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
@@ -120,19 +119,19 @@ def compute_campaign_metrics(
                 }
             )
         )
-        # Attribute signups only when there is a corresponding send
-        if signups.empty or "email" not in signups.columns:
-            signups_attr = pd.DataFrame(columns=[group_col, "email"])
-        else:
-            merge_cols = [
-                c for c in [
-                    group_col,
-                    "email", "send_ts"
-                    ] if c in sends.columns
-                ]
-            signups_attr = signups.merge(
-                sends[merge_cols], on=[group_col, "email"], how="inner"
-            )
+    # Attribute signups only when there is a corresponding send
+    if signups.empty or "email" not in signups.columns:
+        signups_attr = pd.DataFrame(columns=[group_col, "email"])
+    else:
+        merge_cols = [
+            c for c in [
+                group_col,
+                "email", "send_ts"
+                ] if c in sends.columns
+            ]
+        signups_attr = signups.merge(
+            sends[merge_cols], on=[group_col, "email"], how="inner"
+        )
         if (
             "signup_ts" in signups_attr.columns and
             "send_ts" in signups_attr.columns
