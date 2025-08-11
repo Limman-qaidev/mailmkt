@@ -57,7 +57,7 @@ def apply_theme(_: Optional[object] = None) -> None:
 }
 
 /* ========= Global ========= */
-html, body, .stApp {
+ html, body, .stApp, .stAppViewContainer, .main, [data-testid="stAppViewContainer"] {
   background: var(--bg) !important;
   color: var(--text) !important;
   font-family: Arial, Helvetica, sans-serif;
@@ -110,7 +110,7 @@ small, .stCaption, .stMarkdown em, .stMarkdown .small { color: var(--muted) !imp
 }
 
 /* ========= Inputs ========= */
-.stTextInput input, .stTextArea textarea, .stNumberInput input {
+.stTextInput input, .stTextArea textarea, .stNumberInput input, textarea, input[type="text"], input[type="search"] {
   background: #FFFFFF !important;
   color: var(--text) !important;
   border: 1px solid rgba(0,0,0,0.15) !important;
@@ -161,9 +161,18 @@ thead tr th {
 tbody tr td { color: var(--text) !important; }
 [data-testid="stDataFrame"] { filter: none !important; }
 [data-testid="stDataFrame"] div[role="grid"] {
-  border: 1px solid rgba(0,0,0,0.08) !ident;
-  border-radius: var(--radius);
+  [data-testid="stDataFrame"] div[role="grid"] {
+  border: 1px solid rgba(0,0,0,0.08) !important;
 }
+
+/* Selects (BaseWeb) focus ring corporativo */
+[data-baseweb="select"] div:focus-within {
+  box-shadow: 0 0 0 2px rgba(0,33,71,0.18) !important;
+  border-color: var(--brand) !important;
+}
+
+/* Focus general accesible */
+*:focus-visible { outline: 2px solid var(--brand) !important; outline-offset: 1px; }
 
 /* ========= Metrics ========= */
 [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {

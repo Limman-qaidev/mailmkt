@@ -104,7 +104,11 @@ def main() -> None:
     """
     # Apply global Streamlit options and custom CSS defined in the style
     # module.
-    st.set_page_config(page_title="Mail watcher Dashboard", layout="wide")
+    st.set_page_config(
+        page_title="MauBank – Mail Watcher",
+        layout="wide",
+        page_icon="email_marketing/dashboard/static/maubank/logo.png",  # si existe
+    )
     style.apply_theme()
 
     # Optionally launch the tracking server in the same process.
