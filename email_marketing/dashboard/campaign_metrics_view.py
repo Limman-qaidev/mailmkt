@@ -90,9 +90,48 @@ def render_campaign_metrics_view() -> None:
         st.error(f"Failed to load data: {exc}")
         return
 
+    # --- Harmonize keys: use real campaign name, keep A/B as variant ---
+    for df in (events, sends, signups):
+        if "campaign" in df.columns:
+            df["campaign"] = df["campaign"].astype(str)
+
+    # Mapa msg_id -> campaign tomado de events (vale cualquier tipo de evento)
+    msg2camp = (
+        events.loc[events["campaign"].notna(), ["msg_id", "campaign"]]
+        .drop_duplicates("msg_id")
+        .set_index("msg_id")["campaign"]
+    )
+
+    # Si 'campaign' de sends es realmente el variant A/B, lo preservamos
+    if "campaign" in sends.columns:
+        sends["variant"] = sends["campaign"]
+
+    # Reescribimos sends.campaign con la campaña real cuando exista,
+    # y si no, dejamos lo que hubiera para no perder datos sintéticos antiguos
+    sends["campaign"] = sends["msg_id"].map(msg2camp).fillna(
+        sends.get("campaign")
+        )
+
+    # Asegura tipos de fechas por si acaso
+    if "send_ts" in sends.columns:
+        sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
+    if "event_ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(
+            events["event_ts"], errors="coerce")
+    elif "ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
+    if "signup_ts" in signups.columns:
+        signups["signup_ts"] = pd.to_datetime(
+            signups["signup_ts"], errors="coerce"
+            )
+
     generate_distribution_list_by_campaign()
 
     events["event_ts"] = pd.to_datetime(events["event_ts"], errors="coerce")
+    if "signup_ts" in signups.columns:
+        signups["signup_ts"] = pd.to_datetime(
+            signups["signup_ts"], errors="coerce"
+        )
     try:
         metrics_df = compute_campaign_metrics(sends, events, signups)
     except Exception as exc:  # pragma: no cover - defensive
@@ -161,7 +200,6 @@ def render_campaign_metrics_view() -> None:
                 st.caption(f"{pct}% complete ({elapsed}/{total_days} days)")
 
         # Plot using Streamlit's built-in bar chart for quick visualisation.
-        st.write(metrics_df)
         with metrics_tab:
             m = metrics_df.loc[selected, :]
             if m.empty:
@@ -234,8 +272,7 @@ def render_campaign_metrics_view() -> None:
                         value=m["ctr"],
                         delta={"reference": 0, "relative": False},
                         gauge={"axis": {"range": [0, 1]}},
-                        # title={"text": "Click Rate"},
-                        title={"text": "CTR"}
+                        title={"text": "Click Rate"}
                     )
                 )
                 k2.plotly_chart(fig, use_container_width=True)
