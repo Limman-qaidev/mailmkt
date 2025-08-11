@@ -1,16 +1,15 @@
 """Dashboard styling configuration.
 
-This module encapsulates the theme variables used throughout the Streamlit
-dashboard.  Styles are defined via a dataclass and injected into the page
-using ``st.markdown``.  By centralising these values you can easily
-customise the look and feel of the application from a single place.
+MauBank-inspired light theme for the Streamlit dashboard.
+This module centralises the look & feel via CSS variables and targeted
+component rules. It is drop-in and backward compatible with the app.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import streamlit as st
 
@@ -23,103 +22,191 @@ class Theme:
     heading_font: str = "Arial, sans-serif"
     base_font_size: int = 14
     spacing_unit: int = 8
-    # Define a neutral colour palette; concrete colours are intentionally
-    # unspecified to enable runtime theming.  You can override these with
-    # environment variables or by modifying this dataclass.
-    colours: Tuple[str, str, str] = ("#ffffff", "#f5f5f5", "#333333")
+    # (bg, secondary bg, text). Kept for compatibility if used elsewhere.
+    colours: Tuple[str, str, str] = ("#ffffff", "#f5f5f5", "#222222")
 
 
 THEME = Theme()
 
 
-def apply_theme() -> None:
-    """Inject a clean, professional look & feel using CSS variables."""
+def apply_theme(_: Optional[object] = None) -> None:
+    """Inject MauBank-inspired light theme into Streamlit app."""
     st.markdown(
         """
-        <style>
-        :root{
-          --brand:#2563EB;            /* azul corporativo */
-          --brand-600:#1D4ED8;
-          --accent:#10B981;           /* verde para estados OK */
-          --danger:#EF4444;           /* rojo para avisos */
-          --bg:#0B0F17;               /* fondo oscuro elegante */
-          --bg-2:#0F1522;
-          --card:#111827;             /* cartas */
-          --text:#E5E7EB;             /* texto base */
-          --muted:#94A3B8;            /* texto secundario */
-          --radius:14px;
-          --shadow:0 6px 20px rgba(0,0,0,0.25);
-        }
-        html,body,[data-testid="stAppViewContainer"]{
-          background:linear-gradient(180deg,var(--bg),var(--bg-2));
-          color:var(--text);
-        }
-        .main > div { padding-top: 8px; }
-        h1,h2,h3,h4,h5 { color: var(--text)!important; letter-spacing:.2px; }
-        .stMarkdown, .stText, .stCaption { color: var(--text)!important; }
-        .stDataFrame, .stTable { border-radius: var(--radius); overflow:hidden; }
+<style>
+/* ========= CSS variables (MauBank-inspired) ========= */
+:root {
+  /* Brand */
+  --brand: #002147;        /* deep blue (inferred) */
+  --brand-600: #001437;    /* darker hover */
+  --accent: #10B981;       /* success/OK; (optional: #FFD100 for yellow accents) */
+  --danger: #EF4444;
 
-        /* Cards genéricas */
-        .app-card{
-          background:var(--card);
-          border:1px solid rgba(255,255,255,.06);
-          border-radius:var(--radius);
-          box-shadow:var(--shadow);
-          padding:18px 20px;
-        }
+  /* Surfaces */
+  --bg: #FFFFFF;
+  --bg-2: #F5F5F5;
+  --card: #F7F7F7;
 
-        /* Botones */
-        .stButton>button{
-          background:var(--brand);
-          color:white;
-          border:none;
-          border-radius:12px;
-          padding:10px 16px;
-          font-weight:600;
-          transition: all .15s ease;
-        }
-        .stButton>button:hover{ background:var(--brand-600); transform: translateY(-1px); }
-        .stButton>button[kind="secondary"]{
-          background:transparent; color:var(--text);
-          border:1px solid rgba(255,255,255,.12);
-        }
+  /* Typography */
+  --text: #222222;
+  --muted: #6C757D;
 
-        /* Inputs */
-        .stTextInput>div>div>input, .stTextArea textarea{
-          background:#0B1220; color:var(--text); border-radius:12px; border:1px solid rgba(255,255,255,.08);
-        }
+  /* Shape & elevation */
+  --radius: 8px;
+  --shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
 
-        /* Tabs */
-        .stTabs [role="tablist"] { gap: 8px; }
-        .stTabs [role="tab"] {
-          background: rgba(255,255,255,.04);
-          border-radius:10px;
-          padding:8px 12px;
-        }
-        .stTabs [aria-selected="true"]{
-          background: var(--brand);
-          color: #fff;
-        }
+/* ========= Global ========= */
+html, body, .stApp {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
-        /* MO specific helpers */
-        .mo-hero{display:flex;gap:18px;align-items:center;margin-bottom:12px}
-        .mo-kpis{display:flex;gap:16px;flex-wrap:wrap}
-        .mo-kpi{flex:1;min-width:180px;background:#0B1220;padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,.06)}
-        .mo-card{background:var(--card);padding:18px 20px;border-radius:var(--radius);box-shadow:var(--shadow)}
-        .mo-muted{color:var(--muted);font-size:.92rem}
-        </style>
+/* ========= Sidebar ========= */
+[data-testid="stSidebar"] {
+  background: var(--bg-2) !important;
+}
+[data-testid="stSidebar"] * {
+  color: var(--text) !important;
+}
+[data-testid="stSidebarNav"] a,
+[data-testid="stSidebarNav"] p {
+  color: var(--text) !important;
+}
+
+/* ========= Layout / containers ========= */
+.block-container { padding-top: 1.25rem; }
+.stContainer, .stCard { background: transparent !important; }
+hr { border-top: 1px solid rgba(0,0,0,0.08); }
+
+/* ========= Headings / text ========= */
+h1, h2, h3, h4, h5, h6 { color: var(--text) !important; }
+small, .stCaption, .stMarkdown em, .stMarkdown .small { color: var(--muted) !important; }
+
+/* ========= Buttons ========= */
+.stButton > button {
+  background: var(--brand) !important;
+  color: #FFFFFF !important;
+  border: 1px solid var(--brand) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: var(--shadow);
+  transition: background .15s ease, border-color .15s ease, transform .05s ease-in;
+}
+.stButton > button:hover {
+  background: var(--brand-600) !important;
+  border-color: var(--brand-600) !important;
+}
+.stButton > button:active { transform: translateY(1px); }
+
+/* Secondary */
+.stButton > button[kind="secondary"] {
+  background: transparent !important;
+  color: var(--text) !important;
+  border: 1px solid rgba(0,0,0,0.2) !important;
+  box-shadow: none !important;
+}
+
+/* ========= Inputs ========= */
+.stTextInput input, .stTextArea textarea, .stNumberInput input {
+  background: #FFFFFF !important;
+  color: var(--text) !important;
+  border: 1px solid rgba(0,0,0,0.15) !important;
+  border-radius: var(--radius) !important;
+}
+.stDateInput input, .stDatetimeInput input,
+.stSelectbox [data-baseweb="select"] > div {
+  background: #FFFFFF !important;
+  color: var(--text) !important;
+  border: 1px solid rgba(0,0,0,0.15) !important;
+  border-radius: var(--radius) !important;
+}
+.stFileUploader div[data-testid="stFileUploaderDropzone"] {
+  background: #FFFFFF !important;
+  border: 1px dashed rgba(0,0,0,0.2) !important;
+  border-radius: var(--radius) !important;
+}
+
+/* Checkbox / Radio */
+.stCheckbox [data-testid="stTickbox"] > div,
+.stRadio [role="radiogroup"] > label > div:first-child {
+  border: 1px solid rgba(0,0,0,0.25) !important;
+}
+.stRadio [role="radio"][aria-checked="true"] {
+  outline: 2px solid var(--brand) !important;
+}
+
+/* Slider */
+[data-testid="stSlider"] [role="slider"] { background: var(--brand) !important; }
+
+/* ========= Tabs ========= */
+[data-baseweb="tab-list"] { gap: .25rem; }
+[data-baseweb="tab-list"] button {
+  background: var(--bg-2) !important;
+  color: var(--text) !important;
+  border-radius: var(--radius) var(--radius) 0 0 !important;
+}
+[data-baseweb="tab-list"] button[aria-selected="true"] {
+  background: var(--brand) !important;
+  color: #FFFFFF !important;
+}
+
+/* ========= Tables / DataFrames ========= */
+thead tr th {
+  background: var(--bg-2) !important;
+  color: #1f2937 !important;
+}
+tbody tr td { color: var(--text) !important; }
+[data-testid="stDataFrame"] { filter: none !important; }
+[data-testid="stDataFrame"] div[role="grid"] {
+  border: 1px solid rgba(0,0,0,0.08) !ident;
+  border-radius: var(--radius);
+}
+
+/* ========= Metrics ========= */
+[data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+  color: var(--text) !important;
+}
+
+/* ========= Alerts / Notifications ========= */
+.stAlert > div { border-radius: var(--radius) !important; }
+.stAlert[data-baseweb="notification"][kind="success"] > div { border: 1px solid #b7ebc6; }
+.stAlert[data-baseweb="notification"][kind="error"] > div { border: 1px solid #ffc2c2; }
+
+/* ========= Code blocks ========= */
+code, pre, kbd, samp {
+  background: #F3F4F6 !important;
+  color: #111827 !important;
+  border-radius: 6px;
+}
+
+/* ========= Tooltips ========= */
+[data-testid="stTooltip"] {
+  background: #111827 !important;
+  color: #FFFFFF !important;
+}
+
+/* ========= Cards util classes (opt-in) ========= */
+.mo-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+}
+.mo-muted { color: var(--muted); }
+</style>
         """,
         unsafe_allow_html=True,
     )
 
 
-
 def get_refresh_interval() -> int:
-    """Return the auto‑refresh interval for the dashboard in seconds.
+    """Return the auto-refresh interval for the dashboard in seconds.
 
-    The interval can be configured via the ``REFRESH_INTERVAL`` environment
-    variable.  If the variable is not set or invalid, a default of 60
-    seconds is used.
+    Controlled via environment variable ``REFRESH_INTERVAL``.
+    Defaults to 10 seconds when missing or invalid.
     """
     try:
         return int(os.environ.get("REFRESH_INTERVAL", "10"))
