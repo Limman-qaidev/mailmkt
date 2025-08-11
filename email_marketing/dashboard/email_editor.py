@@ -129,9 +129,24 @@ def render_email_editor() -> None:
     if "preview_list" not in st.session_state:
         st.session_state["preview_list"] = []
 
+   # Prefill from MO (safe: only if present)
+    mo_recipients = st.session_state.pop("mo_recipients", None)
+    mo_subject = st.session_state.pop("mo_subject", "")
+    mo_topic = st.session_state.pop("mo_topic", "")
+
     # 1) Upload recipient list
     mode = st.radio("Recipient source", ["Upload list", "By campaign type"])
     recipients: List[str] = []
+
+    if "preview_list" not in st.session_state:
+        st.session_state["preview_list"] = []
+
+    if mo_recipients:
+        st.success(f"MO selected {len(mo_recipients)} recipients"
+                   f"{' for topic: ' + mo_topic if mo_topic else ''}.")
+        st.session_state["preview_list"] = list(mo_recipients)
+        st.dataframe(pd.DataFrame({"email": st.session_state["preview_list"]}))
+    
     if mode == "Upload list":
         upload = st.file_uploader(
             "Upload recipient list (CSV or Excel)",
@@ -186,7 +201,8 @@ def render_email_editor() -> None:
                 st.dataframe(pd.DataFrame({"email": recipients}))
 
     # 2) Compose subject and HTML body
-    subject = st.text_input("Subject", max_chars=200)
+    # subject = st.text_input("Subject", max_chars=200)
+    subject = st.text_input("Subject", max_chars=200, value=mo_subject or "")
     html_body = st.text_area(
         "HTML Body",
         height=300,

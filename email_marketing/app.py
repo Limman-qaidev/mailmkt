@@ -32,6 +32,7 @@ try:
         stats_view,
         campaign_metrics_view,
         style,
+        mo_assistant,
     )
 except ImportError:
     raise ImportError("Failed to import dashboard modules")
@@ -117,10 +118,14 @@ def main() -> None:
     # Sidebar navigation
     st.sidebar.title("Mail watcher")
     page = st.sidebar.selectbox(
-        "Navigate", ("Email Editor", "Statistics", "Campaign Metrics")
+        "Navigate",
+        ("MO Assistant", "Email Editor", "Statistics", "Campaign Metrics"),  # 👈 NUEVO
+        key="nav",  # 👈 para poder saltar de página desde MO con experimental_rerun
     )
 
-    if page == "Email Editor":
+    if page == "MO Assistant":  # 👈 NUEVO
+        mo_assistant.render_mo_assistant()
+    elif page == "Email Editor":
         email_editor.render_email_editor()
     elif page == "Statistics":
         stats_view.render_stats_view()

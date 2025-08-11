@@ -33,44 +33,85 @@ THEME = Theme()
 
 
 def apply_theme() -> None:
-    """Inject custom CSS into the Streamlit page.
+    """Inject a clean, professional look & feel using CSS variables."""
+    st.markdown(
+        """
+        <style>
+        :root{
+          --brand:#2563EB;            /* azul corporativo */
+          --brand-600:#1D4ED8;
+          --accent:#10B981;           /* verde para estados OK */
+          --danger:#EF4444;           /* rojo para avisos */
+          --bg:#0B0F17;               /* fondo oscuro elegante */
+          --bg-2:#0F1522;
+          --card:#111827;             /* cartas */
+          --text:#E5E7EB;             /* texto base */
+          --muted:#94A3B8;            /* texto secundario */
+          --radius:14px;
+          --shadow:0 6px 20px rgba(0,0,0,0.25);
+        }
+        html,body,[data-testid="stAppViewContainer"]{
+          background:linear-gradient(180deg,var(--bg),var(--bg-2));
+          color:var(--text);
+        }
+        .main > div { padding-top: 8px; }
+        h1,h2,h3,h4,h5 { color: var(--text)!important; letter-spacing:.2px; }
+        .stMarkdown, .stText, .stCaption { color: var(--text)!important; }
+        .stDataFrame, .stTable { border-radius: var(--radius); overflow:hidden; }
 
-    The CSS variables declared here reference the fields of :class:`Theme`.
-    They can be used in the HTML returned by Streamlit components.  This
-    function should be called once per session, ideally at the beginning of
-    the main app.
-    """
-    css = f"""
-    <style>
-    :root {{
-        --primary-font: {THEME.primary_font};
-        --heading-font: {THEME.heading_font};
-        --base-font-size: {THEME.base_font_size}px;
-        --spacing-unit: {THEME.spacing_unit}px;
-        --colour-background: {THEME.colours[0]};
-        --colour-surface: {THEME.colours[1]};
-        --colour-text: {THEME.colours[2]};
-    }}
-    html, body, [class*="css"] {{
-        font-family: var(--primary-font);
-        font-size: var(--base-font-size);
-        color: var(--colour-text);
-        background-color: var(--colour-background);
-    }}
-    h1, h2, h3, h4, h5 {{
-        font-family: var(--heading-font);
-        margin-top: calc(var(--spacing-unit) * 2);
-        margin-bottom: calc(var(--spacing-unit) * 1);
-    }}
-    .metric {{
-        padding: calc(var(--spacing-unit) * 2);
-        margin-bottom: calc(var(--spacing-unit) * 2);
-        background-color: var(--colour-surface);
-        border-radius: calc(var(--spacing-unit) / 2);
-    }}
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
+        /* Cards genéricas */
+        .app-card{
+          background:var(--card);
+          border:1px solid rgba(255,255,255,.06);
+          border-radius:var(--radius);
+          box-shadow:var(--shadow);
+          padding:18px 20px;
+        }
+
+        /* Botones */
+        .stButton>button{
+          background:var(--brand);
+          color:white;
+          border:none;
+          border-radius:12px;
+          padding:10px 16px;
+          font-weight:600;
+          transition: all .15s ease;
+        }
+        .stButton>button:hover{ background:var(--brand-600); transform: translateY(-1px); }
+        .stButton>button[kind="secondary"]{
+          background:transparent; color:var(--text);
+          border:1px solid rgba(255,255,255,.12);
+        }
+
+        /* Inputs */
+        .stTextInput>div>div>input, .stTextArea textarea{
+          background:#0B1220; color:var(--text); border-radius:12px; border:1px solid rgba(255,255,255,.08);
+        }
+
+        /* Tabs */
+        .stTabs [role="tablist"] { gap: 8px; }
+        .stTabs [role="tab"] {
+          background: rgba(255,255,255,.04);
+          border-radius:10px;
+          padding:8px 12px;
+        }
+        .stTabs [aria-selected="true"]{
+          background: var(--brand);
+          color: #fff;
+        }
+
+        /* MO specific helpers */
+        .mo-hero{display:flex;gap:18px;align-items:center;margin-bottom:12px}
+        .mo-kpis{display:flex;gap:16px;flex-wrap:wrap}
+        .mo-kpi{flex:1;min-width:180px;background:#0B1220;padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,.06)}
+        .mo-card{background:var(--card);padding:18px 20px;border-radius:var(--radius);box-shadow:var(--shadow)}
+        .mo-muted{color:var(--muted);font-size:.92rem}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 
 def get_refresh_interval() -> int:
