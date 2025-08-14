@@ -1,47 +1,49 @@
 """Email editor component for the Streamlit dashboard.
 
 This module defines a Streamlit view that lets users upload a recipient
-list, compose an HTML message and trigger the sending of a campaign via
-either SMTP or Mailgun.  Recipient lists can be provided in CSV or Excel
-format and are displayed back to the user for verification.
+list, compose an HTML message, and trigger the sending of a campaign via
+SMTP (or Mailgun if later enabled). Recipient lists can be provided in CSV
+or Excel format and are displayed back to the user for verification.
+
+MO integration:
+- If MO Assistant preloaded a list/subject, a third source mode
+  "From MO Assistant (preloaded)" becomes available automatically.
+- During sending, session flags are set so the sidebar avatar switches to
+  the "writing" animation (mo_bot_writing.svg).
 """
 
 from __future__ import annotations
 
 import os
-import urllib.parse
 import time
-from pathlib import Path
-from datetime import datetime
-import sqlite3
-
+import urllib.parse
 import uuid
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Optional
 
 import pandas as pd
 import streamlit as st
 
 from email_marketing.ab_testing import assign_variant
-# from email_marketing.analytics import calibration
-# from email_marketing.analytics import model as analytics_model
 from email_marketing.analytics.recommend import get_distribution_list
-
-# Uncomment if needed add MailgunSender
 # from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
 
 
+# ============================ Utilities ============================
+
 def _now_ts() -> str:
-    # Espacio entre fecha y hora; optional microseconds
+    """UTC timestamp as 'YYYY-mm-dd HH:MM:SS.ffffff' (no 'T')."""
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 def _load_recipients(upload: Optional[Any]) -> List[str]:
-    """
-    Load recipient addresses from an uploaded file.
+    """Load recipient addresses from an uploaded CSV/Excel (first column).
 
-    Supports CSV and Excel formats.  Assumes the first column contains email
-    addresses.  Non‑email values are ignored.  Returns a list of strings.
+    Non-email values are ignored. Returns a list of strings.
     """
     if upload is None:
         return []
@@ -62,7 +64,7 @@ def _load_recipients(upload: Optional[Any]) -> List[str]:
 
 
 def _db_paths_for_send() -> tuple[str, str]:
-    """Devuelve rutas de email_events.db y email_map.db (carpeta /data)."""
+    """Return paths to email_events.db and email_map.db under /data."""
     base_dir = Path(__file__).resolve().parents[1]
     data_dir = base_dir / "data"
     events_db = str(data_dir / "email_events.db")
@@ -70,48 +72,44 @@ def _db_paths_for_send() -> tuple[str, str]:
     return events_db, email_map_db
 
 
-def _upsert_email_map(email_map_db: str, msg_id: str, recipient: str,
-                      variant: str | None, ts_str: str) -> None:
-    """
-    Inserta/actualiza fila en email_map.
-    Detecta columnas existentes para ser compatible con tu esquema
-    (con o sin send_ts, con o sin campaign_id).
-    """
+def _upsert_email_map(
+    email_map_db: str,
+    msg_id: str,
+    recipient: str,
+    variant: str | None,
+    ts_str: str,
+) -> None:
+    """Insert/replace row in email_map with backward-compatible schema."""
     with sqlite3.connect(email_map_db) as conn:
-        cols = [r[1].lower() for r in conn.execute(
-            "PRAGMA table_info(email_map)"
-            ).fetchall()]
+        cols = [r[1].lower() for r in conn.execute("PRAGMA table_info(email_map)").fetchall()]
         has_send_ts = "send_ts" in cols
 
         if has_send_ts:
             conn.execute(
-                "INSERT OR REPLACE INTO email_map "
-                "(msg_id, recipient, variant, send_ts) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant, send_ts) "
+                "VALUES (?, ?, ?, ?)",
                 (msg_id, recipient, variant, ts_str),
             )
         else:
-            # Esquema antiguo sin send_ts
             conn.execute(
-                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant)"
-                " VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant) "
+                "VALUES (?, ?, ?)",
                 (msg_id, recipient, variant),
             )
         conn.commit()
 
 
-def _log_send_event(events_db: str, msg_id: str, campaign: str,
-                    client_ip: str = "0.0.0.0", ts_str: str | None = None
-                    ) -> None:
-    """
-    Inserta el evento 'send' en la tabla events.
-    Usa formato de timestamp 'YYYY-mm-dd HH:MM:SS.SSSSSS' (sin 'T') para
-      evitar el error de pandas/sqlite.
-    """
+def _log_send_event(
+    events_db: str,
+    msg_id: str,
+    campaign: str,
+    client_ip: str = "0.0.0.0",
+    ts_str: str | None = None,
+) -> None:
+    """Insert a 'send' event into events table (schema-compatible)."""
     if ts_str is None:
         ts_str = _now_ts()
-
     with sqlite3.connect(events_db) as conn:
-        # id es autoincrement, por eso nominamos columnas
         conn.execute(
             """
             INSERT INTO events (msg_id, event_type, client_ip, ts, campaign)
@@ -122,32 +120,68 @@ def _log_send_event(events_db: str, msg_id: str, campaign: str,
         conn.commit()
 
 
+# ================== MO: sending flags for sidebar avatar ==================
+
+def _mo_set_sending_flags(value: bool) -> None:
+    """Set/clear sending flags so the sidebar avatar switches to 'writing'."""
+    for key in ("email_sending", "campaign_sending", "sending"):
+        st.session_state[key] = bool(value)
+
+
+@contextmanager
+def mo_sending_state() -> None:
+    """Context manager to toggle sending flags during the send window."""
+    _mo_set_sending_flags(True)
+    try:
+        yield
+    finally:
+        _mo_set_sending_flags(False)
+
+
+# ============================ Main view ============================
+
 def render_email_editor() -> None:
-    """Render the email editor page in Streamlit."""
+    """Render the email editor page in Streamlit (backward compatible)."""
     st.header("Email Campaign Editor")
 
+    # Initialise preview cache holder
     if "preview_list" not in st.session_state:
         st.session_state["preview_list"] = []
 
-   # Prefill from MO (safe: only if present)
+    # Prefill from MO (consume once; safe if absent)
     mo_recipients = st.session_state.pop("mo_recipients", None)
-    mo_subject = st.session_state.pop("mo_subject", "")
+    # Prefer the live-edited subject if present; fallback to mo_subject
+    mo_subject = st.session_state.pop("mo_subject_live",
+                                      st.session_state.pop("mo_subject", ""))
     mo_topic = st.session_state.pop("mo_topic", "")
 
-    # 1) Upload recipient list
-    mode = st.radio("Recipient source", ["Upload list", "By campaign type"])
+
+    # Recipient source modes (add MO preloaded mode if available)
+    has_mo = bool(mo_recipients)
+    modes = ["Upload list", "By campaign type"]
+    if has_mo:
+        modes.insert(0, "From MO Assistant (preloaded)")
+
+    mode = st.radio("Recipient source", modes, index=0 if has_mo else 0)
+
     recipients: List[str] = []
 
-    if "preview_list" not in st.session_state:
-        st.session_state["preview_list"] = []
+    # ---------- Mode: From MO Assistant (preloaded) ----------
+    if has_mo and mode == "From MO Assistant (preloaded)":
+        recipients = list(mo_recipients or [])
+        st.success(
+            f"MO preloaded {len(recipients)} recipients"
+            f"{(' for topic: ' + mo_topic) if mo_topic else ''}."
+        )
+        # Domain filter (optional, consistent with other mode)
+        if recipients:
+            domains = sorted({e.split("@")[-1] for e in recipients if "@" in e})
+            selected = st.multiselect("Filter by domain", domains, key="mo_domain_filter")
+            view = [e for e in recipients if not selected or e.split("@")[-1] in selected]
+            st.dataframe(pd.DataFrame({"email": view}))
 
-    if mo_recipients:
-        st.success(f"MO selected {len(mo_recipients)} recipients"
-                   f"{' for topic: ' + mo_topic if mo_topic else ''}.")
-        st.session_state["preview_list"] = list(mo_recipients)
-        st.dataframe(pd.DataFrame({"email": st.session_state["preview_list"]}))
-    
-    if mode == "Upload list":
+    # ---------- Mode: Upload list ----------
+    elif mode == "Upload list":
         upload = st.file_uploader(
             "Upload recipient list (CSV or Excel)",
             type=["csv", "xls", "xlsx"],
@@ -156,52 +190,37 @@ def render_email_editor() -> None:
         if recipients:
             st.success(f"Loaded {len(recipients)} recipients.")
             st.dataframe(pd.DataFrame({"email": recipients}))
+
+    # ---------- Mode: By campaign type (recommendation) ----------
     else:
         campaign_id = st.text_input(
             "Campaign ID",
-            help="Identifier of the campaign used to "
-            "build the campaign list.",
+            help="Identifier of the campaign used to build the recommended list.",
         )
-        """threshold = st.slider(
-            "Recommendation threshold",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.5,
-            step=0.05,
-            help=(
-                "Minimum probability required to include a recipient in the "
-                "recommended list."
-                ),
-        )"""
-        if st.button("Preview") and campaign_id:
-            try:
-                recipients = get_distribution_list(campaign_id, 1.0)
-                st.success(
-                    f"Loaded {len(recipients)} recommended recipients."
-                )
-                if recipients:
-                    st.dataframe(pd.DataFrame({"email": recipients}))
-            except Exception as exc:
-                st.error(f"Recommendation failed: {exc}")
+        if st.button("Preview"):
+            if not campaign_id:
+                st.warning("Please provide a Campaign ID.")
+            else:
+                try:
+                    recs = list(get_distribution_list(campaign_id, 1.0))
+                    st.session_state["preview_list"] = recs
+                    st.success(f"Loaded {len(recs)} recommended recipients.")
+                except Exception as exc:
+                    st.error(f"Recommendation failed: {exc}")
 
+        # Optional domain filter over preview_list
         if st.session_state["preview_list"]:
-            domains = sorted({
-                email.split("@")[-1] for email in st.session_state[
-                    "preview_list"
-                    ]
-                })
-            selected = st.multiselect("Filter by domain", domains)
+            domains = sorted({e.split("@")[-1] for e in st.session_state["preview_list"] if "@" in e})
+            selected = st.multiselect("Filter by domain", domains, key="rec_domain_filter")
             recipients = [
-                e
-                for e in st.session_state["preview_list"]
+                e for e in st.session_state["preview_list"]
                 if not selected or e.split("@")[-1] in selected
             ]
-            st.success(f"Loaded {len(recipients)} recommended recipients.")
+            st.success(f"Using {len(recipients)} recipients after filtering.")
             if recipients:
                 st.dataframe(pd.DataFrame({"email": recipients}))
 
-    # 2) Compose subject and HTML body
-    # subject = st.text_input("Subject", max_chars=200)
+    # ---------- Compose ----------
     subject = st.text_input("Subject", max_chars=200, value=mo_subject or "")
     html_body = st.text_area(
         "HTML Body",
@@ -209,154 +228,83 @@ def render_email_editor() -> None:
         placeholder="<p>Hello {{ name }}, welcome to our newsletter.</p>",
     )
 
-    # 3) Choose sender and analytics actions
-    # Uncomment if needed adding MailgunSender
-    # sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
-    """st.sidebar.subheader("Analytics")
-    if st.sidebar.button("Recalculate weights"):
-        calibration.recalculate_weights()
-        st.sidebar.success("Weights recalibrated")
-    if st.sidebar.button("Retrain model"):
-        analytics_model.train_model()
-        st.sidebar.success("Model trained")"""
-    send_button = st.button(
-        "Send Email", disabled=not recipients or not html_body
-        )
+    st.markdown("---")
+
+    # ---------- Send campaign ----------
+    can_send = bool(recipients) and bool(subject) and bool(html_body)
+    send_button = st.button("Send Email", type="primary", disabled=not can_send, key="mo_send_button")
     if not send_button:
         return
 
-    # 4) Instantiate the chosen sender
-    # Uncomment if needed add MailgunSender
+    # Instantiate sender (keep SMTP by default)
     sender = SMTPSender()
-    """if sender_choice == "SMTP":
-        sender = SMTPSender()
-    else:
-        try:
-            sender = MailgunSender()
-        except Exception as exc:
-            st.error(f"Error initializing Mailgun sender: {exc}")
-            return"""
+    # If you later enable Mailgun:
+    # sender = MailgunSender() if sender_choice == "Mailgun" else SMTPSender()
 
-    # 5) Determine tracking URL
-    # Override tracking URL manually in the UI if needed
-    default_tracking_url = os.environ.get(
-        "TRACKING_URL",
-        "https://track.jonathansalgadonieto.com"
-        )
-    # tracking_url = st.text_input(
-    #     "Tracking URL",
-    #     value=default_tracking_url,
-    #     help="URL pública de tu servidor de tracking"
-    # ).strip()
-    tracking_url = default_tracking_url
-    # 6) Debug: show the exact URLs that will be embedded
-    # sample_id = uuid.uuid4().hex
-    # pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
-    # click_debug = f"{tracking_url}/click?{urllib.parse.urlencode(
-    # {'msg_id': sample_id, 'url': 'https://example.com'})}"
-    # unsub_debug = f"{tracking_url}/unsubscribe?msg_id={sample_id}"
-    # complaint_debug = f"{tracking_url}/complaint?msg_id={sample_id}"
+    # Tracking URL (can be made configurable)
+    tracking_url = os.environ.get("TRACKING_URL", "https://track.jonathansalgadonieto.com").strip()
 
-    """st.markdown("### 🔍 Debug: Embedded Tracking URLs")
-    st.write("**Pixel URL:**", pixel_debug)
-    st.write("**Click URL:**", click_debug)
-    st.write("**Unsubscribe URL:**", unsub_debug)
-    st.write("**Complaint URL:**", complaint_debug)"""
-    st.markdown("---")
-
-    # 7) Send emails with progress bar
     total = len(recipients)
     progress = st.progress(0.0)
-
     events_db_path, email_map_db_path = _db_paths_for_send()
 
-    for i, email in enumerate(recipients, start=1):
-        # Assign variant and generate msg_id
-        variant = assign_variant(email)
-        msg_id = uuid.uuid4().hex
+    # Toggle MO "writing" state during the whole send loop
+    with mo_sending_state():
+        with st.spinner("Sending emails..."):
+            for i, email in enumerate(recipients, start=1):
+                # Assign variant and generate msg_id
+                variant = assign_variant(email)
+                msg_id = uuid.uuid4().hex
 
-        # a) Build open-pixel tag
-        timestamp = int(time.time())
-        # pixel_tag = (
-        #    f'<img src="{tracking_url}/pixel?msg_id={msg_id}&ts={timestamp}" '
-        #    'width="1" height="1" alt="" border="0" '
-        #    'style="display:block; visibility:hidden;"/>'
-        # )
-        logo_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id,
-             "ts": timestamp,
-             "campaign": subject}
-             )
-        logo_tag = (
-            f'<p><img src="{tracking_url}/logo?{logo_qs}" '
-            'alt="Company Logo" width="200"/></p>'
-        )
+                # a) Build open-pixel/logo tag
+                timestamp = int(time.time())
+                logo_qs = urllib.parse.urlencode({"msg_id": msg_id, "ts": timestamp, "campaign": subject})
+                logo_tag = f'<p><img src="{tracking_url}/logo?{logo_qs}" alt="Company Logo" width="200"/></p>'
 
-        # b) Build click link
-        click_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id, "url": "https://example.com",
-             "campaign": subject}
-            )
-        click_tag = (
-            f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
-        )
+                # b) Build click link
+                click_qs = urllib.parse.urlencode({"msg_id": msg_id, "url": "https://example.com", "campaign": subject})
+                click_tag = f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
 
-        # c) Build unsubscribe link
-        unsub_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id,
-             "campaign": subject}
-             )
-        unsub_tag = (
-            f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe'
-            '</a></p>'
-        )
+                # c) Build unsubscribe link
+                unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject})
+                unsub_tag = f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a></p>'
 
-        # d) Build complaint link
-        comp_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id,
-             "campaign": subject}
-             )
-        complaint_tag = (
-            f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam'
-            '</a></p>'
-        )
-        # e) Assemble full HTML
-        full_html = f"""<!DOCTYPE html>
-                    <html>
-                    <head><meta charset="utf-8"></head>
-                    <body>
-                        {logo_tag}
-                        {html_body}
-                        {click_tag}
-                        {unsub_tag}
-                        {complaint_tag}
-                    </body>
-                    </html>
-                    """
-        # >>> PREVIEW: solo para i==1, muestro el HTML que voy a enviar <<<
-        # if i == 1:
-        #     st.subheader("📧 HTML Preview (first recipient)")
-        #     st.code(full_html, language="html")
-        #     st.markdown("---")
-        # f) Send the email
-        try:
-            sender.send_email(
-                recipient=email,
-                msg_id=msg_id,
-                html=full_html,
-                subject=subject,
-                variant=variant,
-            )
-            ts_str = _now_ts()
-            _log_send_event(events_db_path, msg_id, subject, "0.0.0.0", ts_str)
-            _upsert_email_map(
-                email_map_db_path, msg_id, email, variant, ts_str
-                )
+                # d) Build complaint link
+                comp_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject})
+                complaint_tag = f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam</a></p>'
 
-        except Exception as exc:
-            st.error(f"Failed to send to {email}: {exc}")
+                # e) Assemble full HTML
+                full_html = f"""<!DOCTYPE html>
+                <html>
+                <head><meta charset="utf-8"></head>
+                <body>
+                    {logo_tag}
+                    {html_body}
+                    {click_tag}
+                    {unsub_tag}
+                    {complaint_tag}
+                </body>
+                </html>"""
 
-        # g) Update progress
-        progress.progress(i / total)
+                # f) Send the email
+                try:
+                    sender.send_email(
+                        recipient=email,
+                        msg_id=msg_id,
+                        html=full_html,
+                        subject=subject,
+                        variant=variant,
+                    )
+                    ts_str = _now_ts()
+                    _log_send_event(events_db_path, msg_id, subject, "0.0.0.0", ts_str)
+                    _upsert_email_map(email_map_db_path, msg_id, email, variant, ts_str)
+                except Exception as exc:
+                    st.error(f"Failed to send to {email}: {exc}")
 
+                # g) Update progress
+                progress.progress(i / total)
+
+    # Post-send feedback
+    if hasattr(st, "toast"):
+        st.toast(f"Campaign sent to {total} recipients.")
     st.success("Campaign sent.")

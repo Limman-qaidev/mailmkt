@@ -30,185 +30,220 @@ THEME = Theme()
 
 
 def apply_theme(_: Optional[object] = None) -> None:
-    """Inject MauBank-inspired light theme into Streamlit app."""
+    """Inject MauBank-inspired light theme into Streamlit app (full coverage)."""
     st.markdown(
         """
-<style>
-/* ========= CSS variables (MauBank-inspired) ========= */
-:root {
-  /* Brand */
-  --brand: #002147;        /* deep blue (inferred) */
-  --brand-600: #001437;    /* darker hover */
-  --accent: #10B981;       /* success/OK; (optional: #FFD100 for yellow accents) */
-  --danger: #EF4444;
+    <style>
+    /* ========= MauBank tokens ========= */
+    :root {
+    /* Brand */
+    --brand: #002147;        /* Deep blue (aprox MauBank) */
+    --brand-600: #001437;    /* Hover/active */
+    --accent: #10B981;       /* Success (convención UX) */
+    --accent-yellow: #FFD100;/* Acento opcional en chips/badges */
+    --danger: #EF4444;
 
-  /* Surfaces */
-  --bg: #FFFFFF;
-  --bg-2: #F5F5F5;
-  --card: #F7F7F7;
+    /* Surfaces */
+    --bg: #FFFFFF;
+    --bg-2: #F5F5F5;
+    --card: #F7F7F7;
+    --border: #E5E7EB;
 
-  /* Typography */
-  --text: #222222;
-  --muted: #6C757D;
+    /* Typography */
+    --text: #222222;
+    --muted: #6C757D;
 
-  /* Shape & elevation */
-  --radius: 8px;
-  --shadow: 0 4px 12px rgba(0,0,0,0.12);
-}
+    /* Focus/A11y */
+    --focus-ring: rgba(0,33,71,0.35); /* brand with alpha */
+    --ring-width: 2px;
 
-/* ========= Global ========= */
- html, body, .stApp, .stAppViewContainer, .main, [data-testid="stAppViewContainer"] {
-  background: var(--bg) !important;
-  color: var(--text) !important;
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+    /* Shape & elevation */
+    --radius: 8px;
+    --shadow: 0 4px 12px rgba(0,0,0,0.12);
+    }
 
-/* ========= Sidebar ========= */
-[data-testid="stSidebar"] {
-  background: var(--bg-2) !important;
-}
-[data-testid="stSidebar"] * {
-  color: var(--text) !important;
-}
-[data-testid="stSidebarNav"] a,
-[data-testid="stSidebarNav"] p {
-  color: var(--text) !important;
-}
+    /* ========= Global ========= */
+    html, body, .stApp, .stAppViewContainer, .main, [data-testid="stAppViewContainer"] {
+    background: var(--bg) !important;
+    color: var(--text) !important;
+    font-family: Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    }
+    *:focus-visible { outline: var(--ring-width) solid var(--focus-ring) !important; outline-offset: 1px; }
+    @media (prefers-reduced-motion: reduce){
+    *{ transition:none !important; animation:none !important; }
+    }
 
-/* ========= Layout / containers ========= */
-.block-container { padding-top: 1.25rem; }
-.stContainer, .stCard { background: transparent !important; }
-hr { border-top: 1px solid rgba(0,0,0,0.08); }
+    /* ========= Sidebar ========= */
+    [data-testid="stSidebar"] { background: var(--bg-2) !important; }
+    [data-testid="stSidebar"] * { color: var(--text) !important; }
+    [data-testid="stSidebar"] a:hover { color: var(--brand) !important; }
+    [data-testid="stSidebar"] img,
+    [data-testid="stSidebar"] svg {
+    display: inline-block !important;
+    max-width: 100% !important;
+    }
+    [data-testid="stSidebar"] .mo-sidebar-avatar{
+    height: 72px;               /* >= image height */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible !important;
+    margin: 2px 0 8px 0;
+    line-height: 0;
+    }
+    [data-testid="stSidebar"] .mo-sidebar-avatar img{
+    display: block !important;
+    max-height: 64px;
+    width: auto;
+    }
 
-/* ========= Headings / text ========= */
-h1, h2, h3, h4, h5, h6 { color: var(--text) !important; }
-small, .stCaption, .stMarkdown em, .stMarkdown .small { color: var(--muted) !important; }
+    /* ========= Layout / containers ========= */
+    .block-container { padding-top: 1.25rem; }
+    .stContainer, .stCard { background: transparent !important; }
+    hr { border-top: 1px solid var(--border); }
 
-/* ========= Buttons ========= */
-.stButton > button {
-  background: var(--brand) !important;
-  color: #FFFFFF !important;
-  border: 1px solid var(--brand) !important;
-  border-radius: var(--radius) !important;
-  box-shadow: var(--shadow);
-  transition: background .15s ease, border-color .15s ease, transform .05s ease-in;
-}
-.stButton > button:hover {
-  background: var(--brand-600) !important;
-  border-color: var(--brand-600) !important;
-}
-.stButton > button:active { transform: translateY(1px); }
+    /* ========= Headings / text ========= */
+    h1, h2, h3, h4, h5, h6 { color: var(--text) !important; }
+    small, .stCaption, .stMarkdown em, .stMarkdown .small { color: var(--muted) !important; }
 
-/* Secondary */
-.stButton > button[kind="secondary"] {
-  background: transparent !important;
-  color: var(--text) !important;
-  border: 1px solid rgba(0,0,0,0.2) !important;
-  box-shadow: none !important;
-}
+    /* ========= Buttons ========= */
+    .stButton > button {
+    background: var(--brand) !important;
+    color: #FFFFFF !important;
+    border: 1px solid var(--brand) !important;
+    border-radius: var(--radius) !important;
+    box-shadow: var(--shadow);
+    transition: background .15s ease, border-color .15s ease, transform .05s ease-in;
+    }
+    .stButton > button:hover {
+    background: var(--brand-600) !important;
+    border-color: var(--brand-600) !important;
+    }
+    .stButton > button:active { transform: translateY(1px); }
+    .stButton > button:disabled { opacity:.6; cursor:not-allowed; }
 
-/* ========= Inputs ========= */
-.stTextInput input, .stTextArea textarea, .stNumberInput input, textarea, input[type="text"], input[type="search"] {
-  background: #FFFFFF !important;
-  color: var(--text) !important;
-  border: 1px solid rgba(0,0,0,0.15) !important;
-  border-radius: var(--radius) !important;
-}
-.stDateInput input, .stDatetimeInput input,
-.stSelectbox [data-baseweb="select"] > div {
-  background: #FFFFFF !important;
-  color: var(--text) !important;
-  border: 1px solid rgba(0,0,0,0.15) !important;
-  border-radius: var(--radius) !important;
-}
-.stFileUploader div[data-testid="stFileUploaderDropzone"] {
-  background: #FFFFFF !important;
-  border: 1px dashed rgba(0,0,0,0.2) !important;
-  border-radius: var(--radius) !important;
-}
+    /* Secondary (ghost) */
+    .stButton > button[kind="secondary"]{
+    background: transparent !important;
+    color: var(--text) !important;
+    border: 1px solid rgba(0,0,0,0.2) !important;
+    box-shadow: none !important;
+    }
 
-/* Checkbox / Radio */
-.stCheckbox [data-testid="stTickbox"] > div,
-.stRadio [role="radiogroup"] > label > div:first-child {
-  border: 1px solid rgba(0,0,0,0.25) !important;
-}
-.stRadio [role="radio"][aria-checked="true"] {
-  outline: 2px solid var(--brand) !important;
-}
+    /* ========= Inputs / selects ========= */
+    .stTextInput input, .stTextArea textarea, .stNumberInput input,
+    textarea, input[type="text"], input[type="search"]{
+    background: #FFFFFF !important;
+    color: var(--text) !important;
+    border: 1px solid rgba(0,0,0,0.15) !important;
+    border-radius: var(--radius) !important;
+    }
+    .stTextInput input::placeholder, .stTextArea textarea::placeholder { color: #9CA3AF !important; }
 
-/* Slider */
-[data-testid="stSlider"] [role="slider"] { background: var(--brand) !important; }
+    .stDateInput input, .stDatetimeInput input,
+    .stSelectbox [data-baseweb="select"] > div{
+    background: #FFFFFF !important;
+    color: var(--text) !important;
+    border: 1px solid rgba(0,0,0,0.15) !important;
+    border-radius: var(--radius) !important;
+    }
+    [data-baseweb="select"] div:focus-within{
+    box-shadow: 0 0 0 2px var(--focus-ring) !important;
+    border-color: var(--brand) !important;
+    }
+    /* Tags en multi-select (BaseWeb) */
+    [data-baseweb="tag"]{
+    background: #EEF2FF !important; /* azul muy claro */
+    color: #0F172A !important;
+    border-radius: 999px !important;
+    border: 1px solid #DBEAFE !important;
+    }
 
-/* ========= Tabs ========= */
-[data-baseweb="tab-list"] { gap: .25rem; }
-[data-baseweb="tab-list"] button {
-  background: var(--bg-2) !important;
-  color: var(--text) !important;
-  border-radius: var(--radius) var(--radius) 0 0 !important;
-}
-[data-baseweb="tab-list"] button[aria-selected="true"] {
-  background: var(--brand) !important;
-  color: #FFFFFF !important;
-}
+    /* File uploader */
+    .stFileUploader div[data-testid="stFileUploaderDropzone"]{
+    background: #FFFFFF !important;
+    border: 1px dashed rgba(0,0,0,0.2) !important;
+    border-radius: var(--radius) !important;
+    }
+    .stFileUploader div[data-testid="stFileUploaderDropzone"]:hover{
+    border-color: var(--brand) !important;
+    }
 
-/* ========= Tables / DataFrames ========= */
-thead tr th {
-  background: var(--bg-2) !important;
-  color: #1f2937 !important;
-}
-tbody tr td { color: var(--text) !important; }
-[data-testid="stDataFrame"] { filter: none !important; }
-[data-testid="stDataFrame"] div[role="grid"] {
-  [data-testid="stDataFrame"] div[role="grid"] {
-  border: 1px solid rgba(0,0,0,0.08) !important;
-}
+    /* Checkbox / Radio */
+    .stCheckbox [data-testid="stTickbox"] > div,
+    .stRadio [role="radiogroup"] > label > div:first-child{
+    border: 1px solid rgba(0,0,0,0.25) !important;
+    }
 
-/* Selects (BaseWeb) focus ring corporativo */
-[data-baseweb="select"] div:focus-within {
-  box-shadow: 0 0 0 2px rgba(0,33,71,0.18) !important;
-  border-color: var(--brand) !important;
-}
+    /* Slider */
+    [data-testid="stSlider"] [role="slider"]{ background: var(--brand) !important; }
 
-/* Focus general accesible */
-*:focus-visible { outline: 2px solid var(--brand) !important; outline-offset: 1px; }
+    /* ========= Tabs ========= */
+    [data-baseweb="tab-list"]{ gap: .25rem; }
+    [data-baseweb="tab-list"] button{
+    background: var(--bg-2) !important;
+    color: var(--text) !important;
+    border-radius: var(--radius) var(--radius) 0 0 !important;
+    }
+    [data-baseweb="tab-list"] button[aria-selected="true"]{
+    background: var(--brand) !important;
+    color: #FFFFFF !important;
+    }
 
-/* ========= Metrics ========= */
-[data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
-  color: var(--text) !important;
-}
+    /* ========= Tables / DataFrames ========= */
+    thead tr th{
+    background: var(--bg-2) !important;
+    color: #1f2937 !important;
+    }
+    tbody tr td{ color: var(--text) !important; }
+    tbody tr:nth-child(even) td{ background: #FAFAFA !important; }
+    [data-testid="stDataFrame"] div[role="grid"]{
+    border: 1px solid rgba(0,0,0,0.08) !important;
+    border-radius: var(--radius);
+    }
 
-/* ========= Alerts / Notifications ========= */
-.stAlert > div { border-radius: var(--radius) !important; }
-.stAlert[data-baseweb="notification"][kind="success"] > div { border: 1px solid #b7ebc6; }
-.stAlert[data-baseweb="notification"][kind="error"] > div { border: 1px solid #ffc2c2; }
+    /* ========= Metrics ========= */
+    [data-testid="stMetricValue"]{ color: var(--text) !important; font-weight: 600; }
+    [data-testid="stMetricLabel"]{ color: var(--muted) !important; }
 
-/* ========= Code blocks ========= */
-code, pre, kbd, samp {
-  background: #F3F4F6 !important;
-  color: #111827 !important;
-  border-radius: 6px;
-}
+    /* ========= Alerts / Notifications ========= */
+    .stAlert > div{ border-radius: var(--radius) !important; }
+    .stAlert[data-baseweb="notification"][kind="success"] > div{ border: 1px solid #b7ebc6; }
+    .stAlert[data-baseweb="notification"][kind="error"] > div{ border: 1px solid #ffc2c2; }
+    .stAlert[data-baseweb="notification"][kind="info"] > div{ border: 1px solid #cfe2ff; }
 
-/* ========= Tooltips ========= */
-[data-testid="stTooltip"] {
-  background: #111827 !important;
-  color: #FFFFFF !important;
-}
+    /* Progress & spinner & toast */
+    [data-testid="stProgress"] > div > div{ background: var(--brand) !important; }
+    [data-testid="stSpinner"]{ color: var(--brand) !important; }
+    [data-testid="stToast"]{ background: #111827 !important; color: #FFFFFF !important; }
 
-/* ========= Cards util classes (opt-in) ========= */
-.mo-card {
-  background: var(--card);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 1rem;
-}
-.mo-muted { color: var(--muted); }
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
+    /* ========= Code blocks ========= */
+    code, pre, kbd, samp{
+    background: #F3F4F6 !important;
+    color: #111827 !important;
+    border-radius: 6px;
+    }
+
+    /* ========= Utility (opt-in) ========= */
+    .mo-card{
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1rem;
+    }
+    .mo-muted{ color: var(--muted); }
+
+    /* ========= Responsive tweaks ========= */
+    @media (max-width: 900px){
+    [data-baseweb="tab-list"]{ gap: .15rem; }
+    .block-container{ padding-left: .5rem; padding-right: .5rem; }
+    }
+    </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def get_refresh_interval() -> int:
@@ -221,3 +256,36 @@ def get_refresh_interval() -> int:
         return int(os.environ.get("REFRESH_INTERVAL", "10"))
     except ValueError:
         return 10
+
+
+# --- Brand-consistent Matplotlib theme (optional, no breaking changes) ---
+def apply_matplotlib_theme() -> None:
+    """Set Matplotlib rcParams to align charts with the dashboard theme."""
+    try:
+        import matplotlib as mpl
+
+        mpl.rcParams.update({
+            "figure.facecolor": "#FFFFFF",
+            "axes.facecolor": "#FFFFFF",
+            "axes.edgecolor": "#333333",
+            "axes.labelcolor": "#222222",
+            "text.color": "#222222",
+            "axes.grid": True,
+            "grid.color": "#E5E7EB",
+            "grid.linestyle": "-",
+            "grid.linewidth": 0.6,
+            "axes.prop_cycle": mpl.cycler(color=[
+                "#002147",  # brand
+                "#1D4ED8",  # secondary blue
+                "#10B981",  # success
+                "#F59E0B",  # amber
+                "#EF4444",  # danger
+            ]),
+            "xtick.color": "#222222",
+            "ytick.color": "#222222",
+            "legend.facecolor": "#FFFFFF",
+            "legend.edgecolor": "#E5E7EB",
+        })
+    except Exception:
+        # Do not fail rendering if Matplotlib is absent or misconfigured
+        pass

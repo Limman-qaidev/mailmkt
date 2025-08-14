@@ -1,0 +1,43 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO assistant (default)">
+  <style>
+    :root { --brand:#002147; --accent-yellow:#FFD100; --text:#0F172A; }
+    /* Eyes stay OPEN most of the time; quick close ~120–160ms every ~4.8s */
+    @keyframes blink {
+      0%, 96%, 100% { transform: scaleY(0.08); }  /* OPEN (very thin lids) */
+      97%, 98%     { transform: scaleY(1); }      /* CLOSED */
+    }
+    .blink { transform-origin: 64px 48px; animation: blink 4.8s ease-in-out infinite; }
+  </style>
+
+  <!-- Subtle shadow -->
+  <ellipse cx="64" cy="112" rx="28" ry="6" fill="rgba(0,0,0,0.08)"></ellipse>
+
+  <!-- Body -->
+  <rect x="44" y="78" width="40" height="26" rx="8" fill="var(--brand)"></rect>
+
+  <!-- Head shell -->
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="var(--brand)"></rect>
+  <!-- Face panel -->
+  <rect x="36" y="32" width="56" height="40" rx="12" fill="#FFFFFF"></rect>
+
+  <!-- Eyes (pupils) -->
+  <circle cx="56" cy="52" r="4.4" fill="var(--text)"></circle>
+  <circle cx="72" cy="52" r="4.4" fill="var(--text)"></circle>
+
+  <!-- Eyelids (white) scaled vertically: small = open, full = closed -->
+  <g class="blink">
+    <rect x="50" y="46" width="12" height="12" rx="6" fill="#FFFFFF"></rect>
+    <rect x="66" y="46" width="12" height="12" rx="6" fill="#FFFFFF"></rect>
+  </g>
+
+  <!-- Mouth -->
+  <path d="M52 60 Q64 68 76 60" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round"></path>
+
+  <!-- Antenna -->
+  <line x1="92" y1="20" x2="92" y2="28" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="92" cy="18" r="5" fill="var(--accent-yellow)"></circle>
+
+  <!-- Head outline -->
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="none" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2"></rect>
+</svg>
