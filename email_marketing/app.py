@@ -40,7 +40,8 @@ except ImportError as exc:
     raise ImportError("Failed to import dashboard modules") from exc
 
 try:
-    # Optional tracking server (FastAPI). If unavailable, the dashboard still works.
+    # Optional tracking server (FastAPI). If unavailable, the dashboard still
+    #  works.
     from email_marketing.tracking import server as tracking_server
 except ImportError:
     tracking_server = None  # type: ignore[assignment]
@@ -51,7 +52,10 @@ def _start_tracking_server() -> None:
     if tracking_server is None:
         return
 
-    if os.getenv("RUN_TRACKING_WITH_STREAMLIT", "").lower() not in {"1", "true", "yes"}:
+    if (
+        os.getenv("RUN_TRACKING_WITH_STREAMLIT",
+                  "").lower() not in {"1", "true", "yes"}
+    ):
         return
 
     def _run_server() -> None:
@@ -64,11 +68,15 @@ def _start_tracking_server() -> None:
             raise RuntimeError("Unsupported tracking_server implementation")
 
         if not isinstance(app_instance, FastAPI):
-            raise RuntimeError(f"Expected FastAPI instance, got {type(app_instance)}")
+            raise RuntimeError(
+                f"Expected FastAPI instance, got {type(app_instance)}"
+                )
 
         uvicorn.run(app_instance, host="0.0.0.0", port=8000, log_level="info")
 
-    thread = threading.Thread(target=_run_server, name="tracking-server", daemon=True)
+    thread = threading.Thread(
+        target=_run_server, name="tracking-server", daemon=True
+        )
     thread.start()
 
 
@@ -83,7 +91,7 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
 
     with st.sidebar:
         # Visual wrapper to avoid clipping and to center the avatar
-        #st.markdown(
+        # st.markdown(
         #    f"""
         #    <div class="mo-sidebar-avatar" style="
         #        height:{size_px + 16}px;
@@ -95,11 +103,13 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
         #        line-height:0;">
         #    """,
         #    unsafe_allow_html=True,
-        #)
+        # )
 
         shown = False
         try:
-            static_dir = Path(__file__).resolve().parent / "dashboard" / "static"
+            static_dir = (
+                Path(__file__).resolve().parent / "dashboard" / "static"
+            )
 
             # Select preferred variant per page
             preferred_map = {
@@ -109,7 +119,8 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
             }
             preferred = preferred_map.get(page, "mo_bot_default.svg")
 
-            # Special case: if Email Editor is sending, prefer "writing" animation
+            # Special case: if Email Editor is sending, prefer "writing"
+            #  animation
             sending = bool(
                 st.session_state.get("email_sending")
                 or st.session_state.get("campaign_sending")
@@ -124,7 +135,8 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
                 svg = svg_path.read_text(encoding="utf-8")
                 data_uri = f"data:image/svg+xml;utf8,{quote(svg)}"
                 st.markdown(
-                    f'<img alt="MO" width="{size_px}" height="{size_px}" src="{data_uri}" style="display:block" />',
+                    f'<img alt="MO" width="{size_px}" height="{size_px}" '
+                    f'src="{data_uri}" style="display:block" />',
                     unsafe_allow_html=True,
                 )
                 shown = True
@@ -135,7 +147,8 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
                     svg = fallback_svg.read_text(encoding="utf-8")
                     data_uri = f"data:image/svg+xml;utf8,{quote(svg)}"
                     st.markdown(
-                        f'<img alt="MO" width="{size_px}" height="{size_px}" src="{data_uri}" style="display:block" />',
+                        f'<img alt="MO" width="{size_px}" height="{size_px}"'
+                        f' src="{data_uri}" style="display:block" />',
                         unsafe_allow_html=True,
                     )
                     shown = True
@@ -151,23 +164,29 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
         if not shown:
             # Last-resort inline badge (always visible)
             fallback_svg_inline = """
-            <svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO">
-              <circle cx="64" cy="64" r="62" fill="#002147" stroke="#FFFFFF" stroke-width="4"/>
-              <text x="64" y="80" font-size="56" font-family="Arial, Helvetica, sans-serif" font-weight="700" text-anchor="middle" fill="#FFFFFF">MO</text>
+            <svg width="128" height="128" viewBox="0 0 128 128"
+              xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO">
+              <circle cx="64" cy="64" r="62" fill="#002147"
+                stroke="#FFFFFF" stroke-width="4"/>
+              <text x="64" y="80" font-size="56" font-family="Arial,
+                Helvetica, sans-serif" font-weight="700"
+                  text-anchor="middle" fill="#FFFFFF">MO</text>
             </svg>
             """.strip()
             st.markdown(
                 f'<img alt="MO" width="{size_px}" height="{size_px}" '
-                f'src="data:image/svg+xml;utf8,{quote(fallback_svg_inline)}" style="display:block" />',
+                f'src="data:image/svg+xml;utf8,{quote(fallback_svg_inline)}"'
+                ' style="display:block" />',
                 unsafe_allow_html=True,
             )
 
         st.markdown("</div>", unsafe_allow_html=True)  # close wrapper
-        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)  # spacer
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
 
 def main() -> None:
-    """Render the Streamlit dashboard and optionally launch the tracking API."""
+    """Render the Streamlit dashboard and optionally launch the
+      tracking API."""
     st.set_page_config(
         page_title="MauBank – Mail Watcher",
         layout="wide",
@@ -177,7 +196,10 @@ def main() -> None:
     if hasattr(style, "apply_matplotlib_theme"):
         style.apply_matplotlib_theme()
 
-    if os.environ.get("RUN_TRACKING_WITH_STREAMLIT", "false").lower() in {"1", "true", "yes"}:
+    if (
+        os.environ.get("RUN_TRACKING_WITH_STREAMLIT",
+                       "false").lower() in {"1", "true", "yes"}
+    ):
         _start_tracking_server()
 
     # Handle page redirects requested by sub-pages (set *before* the selectbox)

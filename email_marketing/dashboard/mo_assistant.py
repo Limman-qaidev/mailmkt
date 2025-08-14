@@ -28,6 +28,7 @@ PREVIEW_SOURCE = "mo_preview_source"  # "CSV" | "Recommender" | "Database"
 
 # ------------ Paths & IO ------------
 
+
 def _data_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "data"
 
@@ -52,9 +53,15 @@ def _load_distribution_csv(path: Path) -> List[str]:
         elif df.shape[1] == 1:
             series = df.iloc[:, 0]
         else:
-            email_cols = [c for c in df.columns if "mail" in c.lower() or "email" in c.lower()]
+            email_cols = [
+                c for c in df.columns if "mail" in c.lower(
+                ) or "email" in c.lower()
+                ]
             series = df[email_cols[0]] if email_cols else df.iloc[:, 0]
-        emails = [str(v).strip() for v in series if isinstance(v, str) and "@" in str(v)]
+        emails = [
+            str(v).strip() for v in series if isinstance(
+                v, str) and "@" in str(v)
+            ]
         return sorted(dict.fromkeys(emails))
     except Exception:
         return []
@@ -94,7 +101,8 @@ def _inline_svg(svg: str, width_px: int = 96) -> None:
         return
     st.markdown(
         f"""
-        <div style="display:flex;align-items:center;justify-content:center;width:{width_px}px;height:{width_px}px;margin:0 auto;">
+        <div style="display:flex;align-items:center;justify-content:center;
+        width:{width_px}px;height:{width_px}px;margin:0 auto;">
           <div style="width:{width_px}px;height:{width_px}px">{svg}</div>
         </div>
         """,
@@ -102,7 +110,10 @@ def _inline_svg(svg: str, width_px: int = 96) -> None:
     )
 
 
-def _render_mo_avatar(state: AvatarState = "neutral", width_px: int = 96) -> None:
+def _render_mo_avatar(
+        state: AvatarState = "neutral",
+        width_px: int = 96
+        ) -> None:
     static_dir = Path(__file__).resolve().parent / "static"
     mapping = {
         "neutral": static_dir / "mo_bot_default.svg",
@@ -125,9 +136,14 @@ def _render_mo_avatar(state: AvatarState = "neutral", width_px: int = 96) -> Non
 
     if not svg:
         svg = """
-        <svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO assistant">
-          <circle cx="64" cy="64" r="62" fill="#002147" stroke="#FFFFFF" stroke-width="4"/>
-          <text x="64" y="78" font-size="56" font-family="Arial, Helvetica, sans-serif" font-weight="700" text-anchor="middle" fill="#FFFFFF">MO</text>
+        <svg width="128" height="128" viewBox="0 0 128 128"
+          xmlns="http://www.w3.org/2000/svg" role="img"
+            aria-label="MO assistant">
+          <circle cx="64" cy="64" r="62" fill="#002147"
+            stroke="#FFFFFF" stroke-width="4"/>
+          <text x="64" y="78" font-size="56" font-family="Arial,
+            Helvetica, sans-serif" font-weight="700"
+              text-anchor="middle" fill="#FFFFFF">MO</text>
         </svg>
         """
     _inline_svg(svg, width_px=width_px)
@@ -155,7 +171,9 @@ def _recent_topics_from_campaigns_db(limit: int = 6) -> List[str]:
         return []
     try:
         with sqlite3.connect(str(db)) as conn:
-            cols = {row[1].lower() for row in conn.execute("PRAGMA table_info(campaigns)").fetchall()}
+            cols = {row[1].lower() for row in conn.execute(
+                "PRAGMA table_info(campaigns)"
+                ).fetchall()}
             topics: List[str] = []
             if "topic" in cols:
                 q = """
@@ -178,7 +196,10 @@ def _recent_topics_from_campaigns_db(limit: int = 6) -> List[str]:
                     LIMIT ?
                 """
                 rows = conn.execute(q, (limit * 3,)).fetchall()
-                cand = [_extract_topic_from_subject(str(r[0])) for r in rows if r and r[0]]
+                cand = [
+                    _extract_topic_from_subject(
+                        str(r[0])) for r in rows if r and r[0]
+                    ]
                 topics = [t for t in cand if t]
             seen = set()
             out: List[str] = []
@@ -201,7 +222,9 @@ def _recent_topics_from_events_db(limit: int = 6) -> List[str]:
         return []
     try:
         with sqlite3.connect(str(db)) as conn:
-            cols = {row[1].lower() for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+            cols = {row[1].lower() for row in conn.execute(
+                "PRAGMA table_info(events)"
+                ).fetchall()}
             topics: List[str] = []
             if "subject" in cols:
                 q = """
@@ -213,7 +236,10 @@ def _recent_topics_from_events_db(limit: int = 6) -> List[str]:
                     LIMIT ?
                 """
                 rows = conn.execute(q, (limit * 3,)).fetchall()
-                cand = [_extract_topic_from_subject(str(r[0])) for r in rows if r and r[0]]
+                cand = [
+                    _extract_topic_from_subject(
+                        str(r[0])) for r in rows if r and r[0]
+                        ]
                 topics = [t for t in cand if t]
             else:
                 topics = []
@@ -243,7 +269,7 @@ def _recent_topics_from_csv(limit: int = 6) -> List[str]:
     seen = set()
     for p in files:
         name = p.name
-        topic_part = name[len("distribution_list_") : -len(".csv")]
+        topic_part = name[len("distribution_list_"): -len(".csv")]
         if not topic_part:
             continue
         label = topic_part.replace("-", " ").strip()
@@ -320,9 +346,11 @@ def _inject_page_css() -> None:
             border-color: transparent transparent #FFFFFF transparent;
         }
 
-        .mo-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem; }
+        .mo-card { background: var(--card); border-radius: var(--radius);
+          box-shadow: var(--shadow); padding: 1rem; }
 
-        .mo-chip-row { display:flex; flex-wrap:wrap; gap:.5rem; margin:.25rem 0 .75rem 0; }
+        .mo-chip-row { display:flex; flex-wrap:wrap; gap:.5rem;
+          margin:.25rem 0 .75rem 0; }
         .mo-chip button {
             border-radius: 999px !important;
             background: #FFFFFF !important;
@@ -336,30 +364,33 @@ def _inject_page_css() -> None:
         }
 
         /* Stat tiles */
-        .mo-stat { 
+        .mo-stat {
             background:#FFFFFF; border:1px solid var(--border);
-            border-radius: 12px; box-shadow: var(--shadow); 
-            padding: .9rem 1rem; display:flex; gap:.75rem; align-items:center; 
+            border-radius: 12px; box-shadow: var(--shadow);
+            padding: .9rem 1rem; display:flex; gap:.75rem; align-items:center;
             min-height: 86px;
         }
-        .mo-stat .icon { 
-            width: 40px; height: 40px; border-radius: 999px; 
+        .mo-stat .icon {
+            width: 40px; height: 40px; border-radius: 999px;
             display:flex; align-items:center; justify-content:center;
             background: #EEF2FF; border:1px solid #DBEAFE;
             font-size: 1.1rem;
         }
         .mo-stat .meta { line-height: 1.1; }
-        .mo-stat .label { font-size:.75rem; color: var(--muted); letter-spacing:.04em; text-transform:uppercase; }
-        .mo-stat .value { font-size:1.5rem; font-weight:700; color: var(--text); margin-top:.2rem; }
+        .mo-stat .label { font-size:.75rem; color: var(--muted);
+          letter-spacing:.04em; text-transform:uppercase; }
+        .mo-stat .value { font-size:1.5rem; font-weight:700;
+          color: var(--text); margin-top:.2rem; }
 
         .mo-badge {
             display:inline-block; padding: .2rem .6rem; border-radius: 999px;
             background: #EEF2FF; color: #0F172A; border: 1px solid #DBEAFE;
             font-size: .75rem; vertical-align: middle;
         }
-        .mo-domain { 
-            display:inline-block; padding:.15rem .5rem; border-radius:999px; 
-            background:#F3F4F6; border:1px solid #E5E7EB; margin:.15rem .25rem 0 0;
+        .mo-domain {
+            display:inline-block; padding:.15rem .5rem; border-radius:999px;
+            background:#F3F4F6; border:1px solid #E5E7EB;
+              margin:.15rem .25rem 0 0;
             font-size:.78rem;
         }
         .mo-section-head { display:flex; align-items:center; gap:.5rem; }
@@ -398,7 +429,11 @@ def _set_preview(topic: str, emails: List[str], source: str) -> None:
     st.session_state[PREVIEW_SOURCE] = source
 
 
-def _prefill_and_jump(emails: List[str], subject_to_use: str, topic: str) -> None:
+def _prefill_and_jump(
+        emails: List[str],
+        subject_to_use: str,
+        topic: str
+        ) -> None:
     st.session_state["mo_recipients"] = emails
     st.session_state["mo_subject"] = (subject_to_use or "").strip()
     st.session_state["mo_topic"] = topic
@@ -411,32 +446,48 @@ def _set_avatar_state(state: AvatarState) -> None:
 
 
 def _get_avatar_state(default: AvatarState = "neutral") -> AvatarState:
-    return st.session_state.get("mo_state", default)  # type: ignore[return-value]
+    return st.session_state.get("mo_state", default)
 
 
-def _render_audience_preview(topic: str, emails: List[str], source_label: str) -> None:
+def _render_audience_preview(
+        topic: str, emails: List[str], source_label: str) -> None:
     """Centered, product-like preview tiles with source badge and sample.
     CSS is injected on every render to survive page switches."""
-    # 1) ALWAYS inject CSS (no session flag); switching pages drops previous CSS.
+    # 1) ALWAYS inject CSS (no session flag); switching pages drops previous
+    #  CSS.
     st.markdown(
         """
         <style>
           .mo-wrap      { max-width: 980px; margin: 0 auto; }
-          .mo-head      { display:flex; align-items:center; gap:.5rem; margin:.2rem 0 1rem 0; }
-          .mo-badge     { display:inline-block; padding:.18rem .6rem; border-radius:999px;
-                           background:#EEF2FF; color:#0F172A; border:1px solid #DBEAFE; font-size:.75rem; }
-          .mo-tiles     { display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; }
-          .mo-tile      { background:#FFFFFF; border:1px solid var(--border); border-radius:12px;
-                           box-shadow:var(--shadow); padding:16px; text-align:center; min-height:100px; }
-          .mo-ico       { width:44px; height:44px; border-radius:999px; display:inline-flex;
-                           align-items:center; justify-content:center; background:#EEF2FF;
-                           border:1px solid #DBEAFE; font-size:22px; margin-bottom:6px; }
-          .mo-label     { font-size:.74rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-          .mo-value     { font-size:1.55rem; font-weight:700; color:var(--text); margin-top:.2rem; }
+          .mo-head      { display:flex; align-items:center;
+            gap:.5rem; margin:.2rem 0 1rem 0; }
+          .mo-badge     { display:inline-block; padding:.18rem .6rem;
+            border-radius:999px;
+                           background:#EEF2FF; color:#0F172A;
+                             border:1px solid #DBEAFE; font-size:.75rem; }
+          .mo-tiles     { display:grid; grid-template-columns: repeat(3, 1fr);
+            gap:16px; }
+          .mo-tile      { background:#FFFFFF; border:1px solid var(--border);
+            border-radius:12px;
+                           box-shadow:var(--shadow); padding:16px;
+                             text-align:center; min-height:100px; }
+          .mo-ico       { width:44px; height:44px; border-radius:999px;
+            display:inline-flex;
+                           align-items:center; justify-content:center;
+                             background:#EEF2FF;
+                           border:1px solid #DBEAFE; font-size:22px;
+                             margin-bottom:6px; }
+          .mo-label     { font-size:.74rem; color:var(--muted);
+            text-transform:uppercase; letter-spacing:.04em; }
+          .mo-value     { font-size:1.55rem; font-weight:700;
+            color:var(--text); margin-top:.2rem; }
           .mo-domains   { margin-top:.35rem; }
-          .mo-domain    { display:inline-block; padding:.15rem .5rem; border-radius:999px;
-                           background:#F3F4F6; border:1px solid #E5E7EB; margin:.15rem .25rem 0 0; font-size:.78rem; }
-          @media (max-width: 900px){ .mo-tiles { grid-template-columns: 1fr; } }
+          .mo-domain    { display:inline-block; padding:.15rem .5rem;
+            border-radius:999px;
+                           background:#F3F4F6; border:1px solid #E5E7EB;
+                             margin:.15rem .25rem 0 0; font-size:.78rem; }
+          @media (max-width: 900px){ .mo-tiles { grid-template-columns: 1fr;
+            } }
         </style>
         """,
         unsafe_allow_html=True,
@@ -451,13 +502,16 @@ def _render_audience_preview(topic: str, emails: List[str], source_label: str) -
     st.markdown('<div class="mo-wrap">', unsafe_allow_html=True)
     st.markdown(
         f'<div class="mo-head"><h3 style="margin:0">Audience preview</h3>'
-        f'<span class="mo-badge">Source: {escape(source_label or "—")}</span></div>',
+        f'<span class="mo-badge">Source: {escape(source_label or "—")}'
+        '</span></div>',
         unsafe_allow_html=True,
     )
 
     # 4) Three tiles
     topic_safe = escape(topic or "—")
-    domains_html = " ".join(f'<span class="mo-domain">{escape(d)} ({n})</span>' for d, n in top3) or "—"
+    domains_html = " ".join(
+        f'<span class="mo-domain">{escape(d)} ({n})</span>' for d, n in top3
+        ) or "—"
     if extra > 0:
         domains_html += f' <span class="mo-domain">+{extra} more</span>'
 
@@ -479,7 +533,8 @@ def _render_audience_preview(topic: str, emails: List[str], source_label: str) -
           <div class="mo-tile">
             <div class="mo-ico">🌐</div>
             <div class="mo-label">Top domains</div>
-            <div class="mo-value" style="font-size:1.05rem; font-weight:600;">&nbsp;</div>
+            <div class="mo-value" style="font-size:1.05rem; font-weight:600;">
+            &nbsp;</div>
             <div class="mo-domains">{domains_html}</div>
           </div>
         </div>
@@ -494,6 +549,7 @@ def _render_audience_preview(topic: str, emails: List[str], source_label: str) -
     st.markdown("</div>", unsafe_allow_html=True)  # close .mo-wrap
 
 # ========================== Page ==========================
+
 
 def render_mo_assistant() -> None:
     """Render MO landing with deterministic preview tiles on every click."""
@@ -549,8 +605,9 @@ def render_mo_assistant() -> None:
             with col:
                 if st.button(friendly.title(), key=f"chip_{slug}"):
                     st.session_state["mo_topic_seed"] = friendly
-                    st.session_state["mo_subject_live"] = _suggest_subject(friendly)
-                    st.session_state.pop("mo_preview_payload", None)  # reset cache
+                    st.session_state["mo_subject_live"] = _suggest_subject(
+                        friendly)
+                    st.session_state.pop("mo_preview_payload", None)
                     if hasattr(st, "toast"):
                         st.toast(f"Topic loaded: {friendly}")
                     st.rerun()
@@ -561,12 +618,17 @@ def render_mo_assistant() -> None:
         placeholder="e.g., loans, mortgages, onboarding",
         key="mo_topic_input",
     ).strip()
-    topic_label = topic_input or (st.session_state.get("mo_preview_payload") or {}).get("topic_label", "")
+    topic_label = topic_input or (
+        st.session_state.get("mo_preview_payload") or {}
+        ).get("topic_label", "")
     topic_slug = _slugify(topic_label)
 
     # Si el topic cambia respecto al cache, invalídalo
     cached = st.session_state.get("mo_preview_payload")
-    if cached and isinstance(cached, dict) and cached.get("topic_slug") != topic_slug:
+    if (
+        cached and isinstance(
+            cached, dict) and cached.get("topic_slug") != topic_slug
+    ):
         st.session_state.pop("mo_preview_payload", None)
         cached = None
 
@@ -589,7 +651,8 @@ def render_mo_assistant() -> None:
             # 2) Recommender
             try:
                 emails = list(get_distribution_list(_topic, 1.0))
-                emails = sorted(dict.fromkeys(e for e in emails if isinstance(e, str) and "@" in e))
+                emails = sorted(dict.fromkeys(e for e in emails if isinstance(
+                    e, str) and "@" in e))
             except Exception:
                 emails = []
             if emails:
@@ -613,7 +676,10 @@ def render_mo_assistant() -> None:
         emails, source_label = _build_audience(topic_label)
         if not emails:
             _set_avatar_state("warning")
-            st.error("No recipients available. Please upload or generate recipients first.")
+            st.error(
+                "No recipients available. Please upload or generate recipients"
+                " first."
+                )
             return
         # Guarda payload y muestra SIEMPRE en esta ejecución
         payload = {
@@ -625,7 +691,10 @@ def render_mo_assistant() -> None:
         st.session_state["mo_preview_payload"] = payload
         show_preview = True
 
-    elif cached and isinstance(cached, dict) and cached.get("topic_slug") == topic_slug:
+    elif (
+        cached and isinstance(
+            cached, dict) and cached.get("topic_slug") == topic_slug
+    ):
         # Reutiliza cache SOLO si corresponde al topic actual
         emails = list(cached.get("emails", []) or [])
         source_label = str(cached.get("source", "") or "")
@@ -641,7 +710,10 @@ def render_mo_assistant() -> None:
             emails, source_label = _build_audience(topic_label)
             if not emails:
                 _set_avatar_state("warning")
-                st.error("No recipients available. Please upload or generate recipients first.")
+                st.error(
+                    "No recipients available. Please upload or generate"
+                    " recipients first."
+                    )
                 return
             st.session_state["mo_preview_payload"] = {
                 "topic_label": topic_label,
@@ -661,16 +733,21 @@ def render_mo_assistant() -> None:
             "Suggested subject",
             value=st.session_state.get("mo_subject_live", subject_default),
             key="mo_subject_edit",
-            help="You can edit this and it will be prefilled in the Email Editor.",
+            help="You can edit this and it will be prefilled in the Email"
+            " Editor.",
         )
         st.session_state["mo_subject_live"] = subject_live
 
         # Guardado opcional si no existe CSV
         csv_path = _csv_path_for_topic(topic_label)
         ask_save = (not csv_path.exists()) and (source_label != "CSV")
-        save_csv = st.checkbox(f"Save this audience to /data/{csv_path.name}", value=True) if ask_save else False
+        save_csv = st.checkbox(f"Save this audience to /data/{csv_path.name}",
+                               value=True) if ask_save else False
 
-        if st.button("Use this audience and open Email Editor", type="primary"):
+        if (
+            st.button("Use this audience and open Email Editor",
+                      type="primary")
+        ):
             if save_csv and (not csv_path.exists()):
                 _save_distribution_csv(csv_path, emails)
             _prefill_and_jump(emails, subject_live, topic_label)
