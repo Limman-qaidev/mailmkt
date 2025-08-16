@@ -35,13 +35,14 @@ try:
         campaign_metrics_view,
         style,
         mo_assistant,
+        recipient_insights,  # NEW: Customer 360º
     )
 except ImportError as exc:
     raise ImportError("Failed to import dashboard modules") from exc
 
 try:
     # Optional tracking server (FastAPI). If unavailable, the dashboard still
-    #  works.
+    # works.
     from email_marketing.tracking import server as tracking_server
 except ImportError:
     tracking_server = None  # type: ignore[assignment]
@@ -52,10 +53,7 @@ def _start_tracking_server() -> None:
     if tracking_server is None:
         return
 
-    if (
-        os.getenv("RUN_TRACKING_WITH_STREAMLIT",
-                  "").lower() not in {"1", "true", "yes"}
-    ):
+    if os.getenv("RUN_TRACKING_WITH_STREAMLIT", "").lower() not in {"1", "true", "yes"}:
         return
 
     def _run_server() -> None:
@@ -68,15 +66,11 @@ def _start_tracking_server() -> None:
             raise RuntimeError("Unsupported tracking_server implementation")
 
         if not isinstance(app_instance, FastAPI):
-            raise RuntimeError(
-                f"Expected FastAPI instance, got {type(app_instance)}"
-                )
+            raise RuntimeError(f"Expected FastAPI instance, got {type(app_instance)}")
 
         uvicorn.run(app_instance, host="0.0.0.0", port=8000, log_level="info")
 
-    thread = threading.Thread(
-        target=_run_server, name="tracking-server", daemon=True
-        )
+    thread = threading.Thread(target=_run_server, name="tracking-server", daemon=True)
     thread.start()
 
 
@@ -90,37 +84,20 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
         return  # do not show the avatar on the landing page
 
     with st.sidebar:
-        # Visual wrapper to avoid clipping and to center the avatar
-        # st.markdown(
-        #    f"""
-        #    <div class="mo-sidebar-avatar" style="
-        #        height:{size_px + 16}px;
-        #        display:flex;
-        #        align-items:center;
-        #        justify-content:center;
-        #        overflow:visible;
-        #        margin:2px 0 8px 0;
-        #        line-height:0;">
-        #    """,
-        #    unsafe_allow_html=True,
-        # )
-
         shown = False
         try:
-            static_dir = (
-                Path(__file__).resolve().parent / "dashboard" / "static"
-            )
+            static_dir = Path(__file__).resolve().parent / "dashboard" / "static"
 
             # Select preferred variant per page
             preferred_map = {
                 "Email Editor": "mo_bot_default.svg",
                 "Statistics": "mo_bot_analyzing.svg",
                 "Campaign Metrics": "mo_bot_metrics.svg",
+                "Customer 360º": "mo_bot_analyzing.svg",
             }
             preferred = preferred_map.get(page, "mo_bot_default.svg")
 
-            # Special case: if Email Editor is sending, prefer "writing"
-            #  animation
+            # Special case: if Email Editor is sending, prefer "writing" animation
             sending = bool(
                 st.session_state.get("email_sending")
                 or st.session_state.get("campaign_sending")
@@ -135,8 +112,11 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
                 svg = svg_path.read_text(encoding="utf-8")
                 data_uri = f"data:image/svg+xml;utf8,{quote(svg)}"
                 st.markdown(
-                    f'<img alt="MO" width="{size_px}" height="{size_px}" '
-                    f'src="{data_uri}" style="display:block" />',
+                    f"""
+                    <div style="height:{size_px + 16}px;display:flex;align-items:center;justify-content:center;overflow:visible;margin:2px 0 8px 0;line-height:0;">
+                      <img alt="MO" width="{size_px}" height="{size_px}" src="{data_uri}" style="display:block" />
+                    </div>
+                    """,
                     unsafe_allow_html=True,
                 )
                 shown = True
@@ -147,8 +127,11 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
                     svg = fallback_svg.read_text(encoding="utf-8")
                     data_uri = f"data:image/svg+xml;utf8,{quote(svg)}"
                     st.markdown(
-                        f'<img alt="MO" width="{size_px}" height="{size_px}"'
-                        f' src="{data_uri}" style="display:block" />',
+                        f"""
+                        <div style="height:{size_px + 16}px;display:flex;align-items:center;justify-content:center;overflow:visible;margin:2px 0 8px 0;line-height:0;">
+                          <img alt="MO" width="{size_px}" height="{size_px}" src="{data_uri}" style="display:block" />
+                        </div>
+                        """,
                         unsafe_allow_html=True,
                     )
                     shown = True
@@ -174,19 +157,21 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
             </svg>
             """.strip()
             st.markdown(
-                f'<img alt="MO" width="{size_px}" height="{size_px}" '
-                f'src="data:image/svg+xml;utf8,{quote(fallback_svg_inline)}"'
-                ' style="display:block" />',
+                f"""
+                <div style="height:{size_px + 16}px;display:flex;align-items:center;justify-content:center;overflow:visible;margin:2px 0 8px 0;line-height:0;">
+                  <img alt="MO" width="{size_px}" height="{size_px}"
+                       src="data:image/svg+xml;utf8,{quote(fallback_svg_inline)}"
+                       style="display:block" />
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
 
-        st.markdown("</div>", unsafe_allow_html=True)  # close wrapper
         st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
 
 def main() -> None:
-    """Render the Streamlit dashboard and optionally launch the
-      tracking API."""
+    """Render the Streamlit dashboard and optionally launch the tracking API."""
     st.set_page_config(
         page_title="MauBank – Mail Watcher",
         layout="wide",
@@ -196,30 +181,39 @@ def main() -> None:
     if hasattr(style, "apply_matplotlib_theme"):
         style.apply_matplotlib_theme()
 
-    if (
-        os.environ.get("RUN_TRACKING_WITH_STREAMLIT",
-                       "false").lower() in {"1", "true", "yes"}
-    ):
+    if os.environ.get("RUN_TRACKING_WITH_STREAMLIT", "false").lower() in {"1", "true", "yes"}:
         _start_tracking_server()
 
-    # Handle page redirects requested by sub-pages (set *before* the selectbox)
-    nav_redirect = st.session_state.pop("nav_redirect", None)
-    if nav_redirect:
-        # Set the target page as the current selection before the widget exists
-        st.session_state["nav"] = nav_redirect
+    # -------- Deferred navigation handling (before building the selectbox) --------
+    # Any sub-page can request a redirect by setting:
+    #   st.session_state["nav_redirect"] = "<Target Page Name>"
+    # or legacy:
+    #   st.session_state["pending_nav"] = "<Target Page Name>"
+    redirect_target = st.session_state.pop("nav_redirect", None) or st.session_state.pop("pending_nav", None)
+
+    pages = (
+        "MO Assistant",
+        "Email Editor",
+        "Statistics",
+        "Campaign Metrics",
+        "Customer 360º",
+    )
+
+    # If a redirect is requested, clear previous widget value so `index` applies
+    default_index = 0
+    if isinstance(redirect_target, str) and redirect_target in pages:
+        default_index = pages.index(redirect_target)
+        if "nav" in st.session_state:
+            del st.session_state["nav"]  # ensure the selectbox respects `index`
 
     # Sidebar title and page selector
     st.sidebar.title("Mail watcher")
-    page = st.sidebar.selectbox(
-        "Navigate",
-        ("MO Assistant", "Email Editor", "Statistics", "Campaign Metrics"),
-        key="nav",
-    )
+    page = st.sidebar.selectbox("Navigate", pages, index=default_index, key="nav")
 
     # Sidebar avatar (page-aware). Hidden on "MO Assistant".
     _render_sidebar_avatar_for_page(page, size_px=120)
 
-    # Route to pages
+    # -------- Routing --------
     if page == "MO Assistant":
         mo_assistant.render_mo_assistant()
     elif page == "Email Editor":
@@ -228,6 +222,8 @@ def main() -> None:
         stats_view.render_stats_view()
     elif page == "Campaign Metrics":
         campaign_metrics_view.render_campaign_metrics_view()
+    elif page == "Customer 360º":
+        recipient_insights.render_recipient_insights()
     else:
         st.write("Unsupported page selected.")
 
