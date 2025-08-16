@@ -367,6 +367,18 @@ def render_recipient_insights() -> None:
         return
     users_df = compute_eb_rates(users_df)
 
+    # --- persistent audience state (for Campaign Planning) ---
+    st.session_state.setdefault("aud_built", False)
+    st.session_state.setdefault("aud_base", None)
+    st.session_state.setdefault("aud_topic", "")
+
+    # selection controls default values
+    st.session_state.setdefault("aud_sel_mode", "Top N")
+    st.session_state.setdefault("aud_sel_n", 500)
+    st.session_state.setdefault("aud_sel_pct", 20)
+    st.session_state.setdefault("aud_sel_target", 50.0)
+    st.session_state.setdefault("aud_bands_pick", ["Very High","High"])
+
     # ========================== Tabs ==========================
     tab_campaign, tab_recipient = st.tabs(["Campaign Planning", "Recipient Detail"])
 
@@ -505,6 +517,8 @@ def render_recipient_insights() -> None:
 
     # ======================= TAB: Campaign Planning =======================
     with tab_campaign:
+        import numpy as np
+
         st.markdown("#### Campaign Planning")
 
         # Goal: acquisition excludes existing owners for the chosen topic
@@ -513,7 +527,7 @@ def render_recipient_insights() -> None:
             ["New acquisition (exclude existing customers)", "All recipients"],
             index=0,
             help=("‘New acquisition’: excludes emails already registered in that "
-                  "product/topic. ‘All recipients’: includes all eligible recipients."),
+                "product/topic. ‘All recipients’: includes all eligible recipients."),
             horizontal=False,
         )
         exclude_owners = goal.startswith("New acquisition")
@@ -531,24 +545,18 @@ def render_recipient_insights() -> None:
                 help="Select the topic/campaign for which you want to build an audience.",
             )
 
-            topN = int(
-                st.number_input(
-                    "Top N recipients to keep",
-                    min_value=10,
-                    value=TOPN_DEFAULT,
-                    step=10,
-                    help="Cut the final audience to the top N by registration probability (p_signup).",
-                )
-            )
+            # How many we ultimately want to keep (used later in selection phase)
+            topN_default = 500
+            st.session_state.setdefault("aud_sel_n", topN_default)
 
-            # ---- Refinement controls (persisted in session_state) ----
+            # ---- Refinement controls (persisted) ----
             with st.expander("Refine audience (optional)"):
-                col_f1, col_f2, col_f3, col_f4 = st.columns([1.1, 1.1, 1.2, 1.2])
+                col_f1, col_f2, col_f3 = st.columns([1.1, 1.1, 1.2])
 
                 col_f1.number_input(
                     "Min. sends in topic",
                     min_value=0,
-                    value=st.session_state.get("refine_min_s_topic", 1),  # default 1 recomendado
+                    value=st.session_state.get("refine_min_s_topic", 1),  # recommended default 1
                     step=1,
                     key="refine_min_s_topic",
                     help="Minimum number of historical sends in this topic to consider the recipient.",
@@ -563,9 +571,7 @@ def render_recipient_insights() -> None:
                     help="0 = no recency filter. If >0, requires an open within that number of days (in this topic).",
                 )
 
-                domain_options = sorted(
-                    [d for d in users_df["domain"].dropna().unique().tolist() if isinstance(d, str)]
-                )
+                domain_options = sorted([d for d in users_df["domain"].dropna().unique().tolist() if isinstance(d, str)])
                 col_f3.multiselect(
                     "Domains (include; empty=all)",
                     options=domain_options,
@@ -574,27 +580,44 @@ def render_recipient_insights() -> None:
                     help="Restrict the audience to specific email domains.",
                 )
 
-                # NEW: minimum probability threshold (0 disables)
-                col_f4.slider(
-                    "Min. signup probability (EB)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=st.session_state.get("refine_min_prob", 0.0),
-                    step=0.01,
-                    key="refine_min_prob",
-                    help="Exclude recipients with p_signup below this threshold. 0 disables this filter.",
-                    )
-
-            if st.button("Build audience"):
-                # --- Read refinements from session (robust on reruns)
-                min_s_topic = int(st.session_state.get("refine_min_s_topic", 1))
-                max_recency_days = int(st.session_state.get("refine_max_recency_days", 0))
-                domains_pick = st.session_state.get("refine_domains_pick", []) or []
-                min_p_signup = float(st.session_state.get("refine_min_p_signup", 0.0))
+            # ---------- PHASE A: Build base audience (runs once when you click the button) ----------
+            if st.button("Build audience", key="build_aud"):
+                # Read refinements from session (robust on reruns)
+                min_s_topic       = int(st.session_state.get("refine_min_s_topic", 1))
+                max_recency_days  = int(st.session_state.get("refine_max_recency_days", 0))
+                domains_pick      = st.session_state.get("refine_domains_pick", []) or []
 
                 # Slice frames for the chosen topic
                 sd_topic = sd_t[sd_t["topic"] == chosen_topic].copy()
                 ev_topic = ev_t[ev_t["topic"] == chosen_topic].copy()
+
+                # p0 for this topic (fallbacks)
+                def _clamp(x, lo, hi):
+                    try:
+                        return float(max(lo, min(hi, x)))
+                    except Exception:
+                        return lo
+
+                S_tot = float(sd_topic["msg_id"].nunique())
+                O_tot = float(ev_topic[ev_topic["event_type"].str.lower().eq("open")]["msg_id"].nunique())
+                C_tot = float(ev_topic[ev_topic["event_type"].str.lower().eq("click")]["msg_id"].nunique())
+                Y_ev_tot = float(ev_topic[ev_topic["event_type"].str.lower().eq("signup")]["msg_id"].nunique())
+
+                # Optional: merge signups table, mapped to topic, without double counting (use the max as a prudent bound)
+                if not signups.empty and {"campaign", "email"}.issubset(signups.columns):
+                    sgn = signups.copy()
+                    sgn["email"] = sgn["email"].astype(str).str.strip().str.lower()
+                    camp2topic = _build_campaign_topic_map(campaigns)
+                    sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(sgn["campaign"].map(_extract_topic_from_text))
+                    Y_tab_tot = float(sgn[sgn["topic"] == chosen_topic]["signup_id"].nunique())
+                else:
+                    Y_tab_tot = 0.0
+
+                Y_tot = max(Y_ev_tot, Y_tab_tot)
+
+                p0_open  = _clamp((O_tot / S_tot) if S_tot > 0 else 0.05, 1e-4, 0.9)
+                p0_click = _clamp((C_tot / S_tot) if S_tot > 0 else 0.02, 1e-4, 0.9)
+                p0_sc    = _clamp((Y_tot / C_tot) if C_tot > 0 else 0.10, 1e-4, 0.9)  # P(signup|click)
 
                 # Owners in this topic: events (signup) + signups table mapped to topic
                 own_topic = (
@@ -605,73 +628,46 @@ def render_recipient_insights() -> None:
                     sgn = signups.copy()
                     sgn["email"] = sgn["email"].astype(str).str.strip().str.lower()
                     camp2topic = _build_campaign_topic_map(campaigns)
-                    sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(
-                        sgn["campaign"].map(_extract_topic_from_text)
-                    )
+                    sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(sgn["campaign"].map(_extract_topic_from_text))
                     own_tab = (
                         sgn[sgn["topic"] == chosen_topic]
                         .groupby("email")["signup_id"].nunique().gt(0)
                     )
                     own_topic = own_topic.combine(own_tab, lambda a, b: bool(a) or bool(b)).fillna(False)
 
-                # Unique counts per email (topic)
-                sends_u = sd_topic.groupby("email")["msg_id"].nunique().rename("S")
-                opens_u = (
-                    ev_topic[ev_topic["event_type"].str.lower().eq("open")]
-                    .groupby("email")["msg_id"].nunique().rename("O")
-                )
-                clicks_u = (
-                    ev_topic[ev_topic["event_type"].str.lower().eq("click")]
-                    .groupby("email")["msg_id"].nunique().rename("C")
-                )
-                unsubs_u = (
-                    ev_topic[ev_topic["event_type"].str.lower().eq("unsubscribe")]
-                    .groupby("email")["msg_id"].nunique().rename("U")
-                )
-                complaints_u = (
-                    ev_topic[ev_topic["event_type"].str.lower().eq("complaint")]
-                    .groupby("email")["msg_id"].nunique().rename("Q")
-                )
+                # Unique counts per email in this topic
+                sends_u   = sd_topic.groupby("email")["msg_id"].nunique().rename("S")
+                opens_u   = ev_topic[ev_topic["event_type"].str.lower().eq("open")]       .groupby("email")["msg_id"].nunique().rename("O")
+                clicks_u  = ev_topic[ev_topic["event_type"].str.lower().eq("click")]      .groupby("email")["msg_id"].nunique().rename("C")
+                unsubs_u  = ev_topic[ev_topic["event_type"].str.lower().eq("unsubscribe")].groupby("email")["msg_id"].nunique().rename("U")
+                complaints_u = ev_topic[ev_topic["event_type"].str.lower().eq("complaint")].groupby("email")["msg_id"].nunique().rename("Q")
 
-                # Signups per email: combina eventos y tabla (indicador 0/1 sin doble conteo)
-                signups_ev = (
-                    ev_topic[ev_topic["event_type"].str.lower().eq("signup")]
-                    .groupby("email")["msg_id"].nunique().rename("Y_ev")
-                )
+                # Y: 0/1 "has signup" from events + table (combined without double counting)
+                signups_ev = ev_topic[ev_topic["event_type"].str.lower().eq("signup")].groupby("email")["msg_id"].nunique()
                 if not signups.empty and {"campaign", "email"}.issubset(signups.columns):
                     sgn = signups.copy()
                     sgn["email"] = sgn["email"].astype(str).str.strip().str.lower()
                     camp2topic = _build_campaign_topic_map(campaigns)
-                    sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(
-                        sgn["campaign"].map(_extract_topic_from_text)
-                    )
-                    signups_tab = (
-                        sgn[sgn["topic"] == chosen_topic]
-                        .groupby("email")["signup_id"].nunique().rename("Y_tab")
-                    )
+                    sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(sgn["campaign"].map(_extract_topic_from_text))
+                    signups_tab = sgn[sgn["topic"] == chosen_topic].groupby("email")["signup_id"].nunique()
                 else:
-                    signups_tab = pd.Series(dtype=float, name="Y_tab")
+                    signups_tab = pd.Series(dtype=float)
 
-                Y = (
-                    (signups_ev > 0).astype(int)
-                    .combine((signups_tab > 0).astype(int), lambda a, b: int(bool(a) or bool(b)))
-                    .rename("Y")
-                )
+                Y_ind = (signups_ev > 0).astype(int).combine((signups_tab > 0).astype(int), lambda a, b: int(bool(a) or bool(b))).rename("Y")
 
-                # Assemble audience table (OUTER merges to avoid missing columns)
+                # Assemble audience base (outer joins)
                 df = (
                     pd.DataFrame(index=pd.Index([], name="email"))
                     .join(sends_u,      how="outer")
-                    .join(Y,            how="outer")
+                    .join(Y_ind,        how="outer")
                     .join(opens_u,      how="outer")
                     .join(clicks_u,     how="outer")
                     .join(unsubs_u,     how="outer")
                     .join(complaints_u, how="outer")
                     .reset_index()
                 )
-
-                # Ensure all numeric cols exist + are numeric (prevents KeyError 'U')
-                for col in ("S", "Y", "O", "C", "U", "Q"):
+                # Ensure numeric columns exist
+                for col in ("S","Y","O","C","U","Q"):
                     if col not in df.columns:
                         df[col] = 0.0
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
@@ -679,275 +675,188 @@ def render_recipient_insights() -> None:
                 if df.empty or df["S"].sum() == 0:
                     st.warning("No eligible recipients for this topic.")
                 else:
-                    # ---------- Topic-level priors (open/click/click→signup) ----------
-                    def _clamp(x, lo, hi):
-                        try:
-                            return float(max(lo, min(hi, x)))
-                        except Exception:
-                            return lo
-
-                    S_tot = float(sd_topic["msg_id"].nunique())
-                    O_tot = float(ev_topic[ev_topic["event_type"].str.lower().eq("open")]["msg_id"].nunique())
-                    C_tot = float(ev_topic[ev_topic["event_type"].str.lower().eq("click")]["msg_id"].nunique())
-                    Y_ev_tot = float(ev_topic[ev_topic["event_type"].str.lower().eq("signup")]["msg_id"].nunique())
-
-                    if not signups.empty and {"campaign", "email"}.issubset(signups.columns):
-                        sgn = signups.copy()
-                        camp2topic = _build_campaign_topic_map(campaigns)
-                        sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(sgn["campaign"].map(_extract_topic_from_text))
-                        Y_tab_tot = float(sgn[sgn["topic"] == chosen_topic]["signup_id"].nunique())
-                    else:
-                        Y_tab_tot = 0.0
-
-                    Y_tot = max(Y_ev_tot, Y_tab_tot)
-                    p0_open = _clamp(O_tot / S_tot if S_tot > 0 else 0.05, 1e-4, 0.9)
-                    p0_click = _clamp(C_tot / S_tot if S_tot > 0 else 0.02, 1e-4, 0.9)
-                    p0_sc = _clamp(Y_tot / C_tot if C_tot > 0 else 0.10, 1e-4, 0.9)  # P(signup|click)
-
-                    # ---------- EB-smoothed per user ----------
+                    # EB-smoothed probability model
                     ALPHA_O, ALPHA_C, ALPHA_SC = 2.0, 2.0, 2.0
                     EPS = 1e-9
 
-                    S_ser = df["S"].astype(float)
-                    O_ser = df["O"].astype(float)
-                    C_ser = df["C"].astype(float)
-                    Y_ser = df["Y"].astype(float)
+                    S_ser = df["S"]
+                    O_ser = df["O"]
+                    C_ser = df["C"]
+                    Y_ser = df["Y"]
 
-                    p_open_hat = (O_ser + ALPHA_O * p0_open)  / (S_ser + ALPHA_O)
+                    p_open_hat  = (O_ser + ALPHA_O * p0_open)  / (S_ser + ALPHA_O)
                     p_click_hat = (C_ser + ALPHA_C * p0_click) / (S_ser + ALPHA_C)
                     p_c_given_o = (p_click_hat / p_open_hat.clip(lower=EPS)).clip(upper=1.0)
-                    p_sc_hat = (Y_ser + ALPHA_SC * p0_sc) / (C_ser + ALPHA_SC)
+                    p_sc_hat    = (Y_ser + ALPHA_SC * p0_sc) / (C_ser + ALPHA_SC)
 
                     df["p_signup"] = (p_open_hat * p_c_given_o * p_sc_hat).fillna(0.0)
 
-                    # ---------- Filters ----------
-                    # 1) minimum exposure in topic
+                    # Eligibility filters (except Top N/%/Target)
+                    # 1) min exposure
                     df = df[df["S"] >= float(min_s_topic)]
-
-                    # 2) exclude owners (new acquisition)
+                    # 2) exclude owners if acquisition
                     if exclude_owners:
                         df = df[~df["email"].map(own_topic).fillna(False)]
-
-                    # 3) exclude unsub/complaint in topic
+                    # 3) exclude unsub/complaint
+                    if "U" not in df.columns: df["U"] = 0.0
+                    if "Q" not in df.columns: df["Q"] = 0.0
                     df = df[(df["U"] == 0.0) & (df["Q"] == 0.0)]
-
-                    # 4) recency (in-topic, optional)
+                    # 4) recency within topic
                     if max_recency_days > 0 and not ev_topic.empty and "event_ts" in ev_topic.columns:
-                        last_open = (
-                            ev_topic[ev_topic["event_type"].str.lower().eq("open")]
-                            .groupby("email")["event_ts"].max()
-                        )
+                        last_open = ev_topic[ev_topic["event_type"].str.lower().eq("open")].groupby("email")["event_ts"].max()
                         now_utc = pd.Timestamp.now(tz="UTC")
                         recency_ok = last_open.apply(lambda ts: (now_utc - ts).days <= max_recency_days if pd.notna(ts) else False)
                         df = df[df["email"].isin(recency_ok[recency_ok].index)]
-
                     # 5) domain filter
                     if domains_pick:
                         df = df[df["email"].str.split("@").str[-1].isin(domains_pick)]
 
-                    # 6) probability threshold
-                    if min_p_signup > 0:
-                        df = df[df["p_signup"] >= min_p_signup]
-
                     if df.empty:
                         st.warning("No eligible recipients after applying filters.")
                     else:
-                        # Final ordering + top N
-                        df["p_signup"] = pd.to_numeric(df["p_signup"], errors="coerce").fillna(0.0)
-                        df = df.sort_values(by=["p_signup", "S"], ascending=[False, False]).head(topN).reset_index(drop=True)
+                        # Save base + topic in session, then rerun
+                        st.session_state["aud_base"]  = df.copy()
+                        st.session_state["aud_topic"] = chosen_topic
+                        st.session_state["aud_built"] = True
+                        st.rerun()
 
-                        b1, b2 = st.columns([1, 1])
-                        with b1:
-                            st.subheader("Final recipients")
-                            st.dataframe(
-                                df[["email", "S", "Y", "p_signup", "O", "C"]],
-                                use_container_width=True,
-                                height=360,
-                            )
-                        with b2:
-                            st.subheader("Summary")
-                            st.markdown(
-                                f"- **Topic:** {chosen_topic}\n"
-                                f"- **Goal:** {'New acquisition' if exclude_owners else 'All recipients'}\n"
-                                f"- **Top N:** {topN}\n"
-                                f"- **Min S per user-topic:** {min_s_topic}\n"
-                                f"- **Min p_signup:** {min_p_signup:.2%}"
-                            )
+            # ---------- PHASE B: Always-on selection UI (won't reset on radio/slider changes) ----------
+            base = st.session_state.get("aud_base")
+            if st.session_state.get("aud_built") and isinstance(base, pd.DataFrame) and not base.empty:
+                st.markdown(f"**Topic:** {st.session_state.get('aud_topic','')}")
 
-                        # Export + Send to MO
-                        topic_slug = re.sub(r"[^a-z0-9]+", "_", chosen_topic.lower()).strip("_") or "topic"
-                        csv_name = f"distribution_list_topic_{topic_slug}.csv"
-                        csv_bytes = df[["email"]].to_csv(index=False).encode("utf-8")
-                        st.download_button(
-                            "Download topic audience (CSV)",
-                            data=csv_bytes,
-                            file_name=csv_name,
-                            mime="text/csv",
-                        )
+                # Probability bands based on current base distribution
+                q = base["p_signup"].quantile([0.50, 0.75, 0.90]).to_dict()
+                q50, q75, q90 = float(q.get(0.50, 0.0)), float(q.get(0.75, 0.0)), float(q.get(0.90, 0.0))
 
-                        colA, colB = st.columns([1, 2])
-                        mo_subject = colB.text_input(
-                            "Subject to use in MO/Editor",
-                            value=f"[{chosen_topic.title()}] New Campaign",
-                            key="subject_topic_audience",
-                            help="Will be prefilled when navigating to MO Assistant / Email Editor.",
-                        )
-                        if colA.button("Send to MO Assistant", type="primary", key="send_topic_aud_to_mo"):
-                            st.session_state["mo_recipients"] = df["email"].astype(str).tolist()
-                            st.session_state["mo_subject_live"] = mo_subject
-                            st.session_state["mo_topic"] = chosen_topic
-                            st.session_state["nav_redirect"] = "MO Assistant"
-                            st.rerun()
+                def _band(p: float) -> str:
+                    if p >= q90: return "Very High"
+                    if p >= q75: return "High"
+                    if p >= q50: return "Medium"
+                    return "Low"
 
-        # --- Best next campaigns ---
-        st.subheader("Best next campaigns")
-        st.caption("Ranking of topics by expected signups (sum of p_signup across eligible recipients).")
+                dfb = base.copy()
+                dfb["prob_band"] = dfb["p_signup"].astype(float).map(_band)
 
-        # Build per-(email,topic) S,Y and EB p_signup for ALL topics
-        grp_s = (
-            sd_t.dropna(subset=["topic"])
-            .groupby(["email", "topic"])["msg_id"]
-            .nunique()
-            .rename("S")
-        )
-        grp_y = (
-            ev_t[ev_t["event_type"].str.lower().eq("signup")]
-            .dropna(subset=["topic"])
-            .groupby(["email", "topic"])["msg_id"]
-            .nunique()
-            .rename("Y")
-        )
-        m = (
-            pd.DataFrame(index=pd.MultiIndex.from_tuples([], names=["email", "topic"]))
-            .join(grp_s, how="outer")
-            .join(grp_y, how="outer")
-            .fillna(0.0)
-            .reset_index()
-        )
-        if m.empty:
-            st.info("Not enough data to rank topics.")
-        else:
-            # p0 per topic (fallback 1%)
-            m = m.merge(corpus[["topic", "p0_signup"]], on="topic", how="left").fillna({"p0_signup": 0.01})
-            S_all, Y_all = m["S"].astype(float), m["Y"].astype(float)
-            m["p_signup"] = (Y_all + ALPHA * m["p0_signup"]) / (S_all + ALPHA)
-
-            # Owners matrix by (email, topic) from events + signups table
-            owners_ev = (
-                ev_t[ev_t["event_type"].str.lower().eq("signup")]
-                .groupby(["email", "topic"])["msg_id"].nunique().gt(0)
-            )
-            owners_tab = pd.Series(dtype=bool)
-            if not signups.empty and {"campaign", "email"}.issubset(signups.columns):
-                sgn = signups.copy()
-                sgn["email"] = sgn["email"].astype(str).str.strip().str.lower()
-                camp2topic = _build_campaign_topic_map(campaigns)
-                sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(
-                    sgn["campaign"].map(_extract_topic_from_text)
+                band_sizes = (
+                    dfb.groupby("prob_band")["email"].nunique()
+                    .reindex(["Very High","High","Medium","Low"])
+                    .fillna(0).astype(int)
                 )
-                owners_tab = sgn.groupby(["email", "topic"])["signup_id"].nunique().gt(0)
+                st.caption("Band sizes → " + " | ".join([f"{b}: {band_sizes.get(b,0):,}" for b in ["Very High","High","Medium","Low"]]))
 
-            owners_all = owners_ev.combine(owners_tab, lambda a, b: bool(a) or bool(b)).fillna(False)
-
-            # Exclude owners if acquisition goal selected
-            if exclude_owners:
-                def _is_owner_row(row) -> bool:
-                    try:
-                        return bool(owners_all.loc[(row["email"], row["topic"])])
-                    except Exception:
-                        return False
-                m = m[~m.apply(_is_owner_row, axis=1)]
-
-            port = (
-                m.groupby("topic")
-                .agg(Eligible=("email", "nunique"),
-                     Expected_signups=("p_signup", "sum"),
-                     Mean_p_signup=("p_signup", "mean"))
-                .reset_index()
-                .sort_values(["Expected_signups", "Mean_p_signup"], ascending=[False, False])
-            )
-            st.dataframe(port.head(20), use_container_width=True, height=360)
-
-            # Quick CTA to build & send the top-ranked topic
-            if not port.empty:
-                c_sel, c_top, c_subj = st.columns([1.4, 1.0, 2.0])
-                topic_choices = port["topic"].tolist()
-                chosen_from_rank = c_sel.selectbox("Choose topic to send", options=topic_choices, index=0)
-                topN_rank = int(c_top.number_input("Top N", min_value=10, value=TOPN_DEFAULT, step=10))
-                subject_rank = c_subj.text_input(
-                    "Subject for MO/Editor",
-                    value=f"[{chosen_from_rank.title()}] New Campaign",
-                    key="subject_best_next",
+                bands_pick = st.multiselect(
+                    "Include probability bands",
+                    options=["Very High","High","Medium","Low"],
+                    default=st.session_state.get("aud_bands_pick", ["Very High","High"]),
+                    key="aud_bands_pick",
+                    help="Choose which probability bands to include in the audience."
                 )
+                if bands_pick:
+                    dfb = dfb[dfb["prob_band"].isin(bands_pick)]
 
-                if st.button("Build & Send to MO Assistant", type="primary", key="build_send_best_next"):
-                    # Reuse per-topic build quickly
-                    sd_topic = sd_t[sd_t["topic"] == chosen_from_rank].copy()
-                    ev_topic = ev_t[ev_t["topic"] == chosen_from_rank].copy()
-                    rowc = corpus.loc[corpus["topic"] == chosen_from_rank]
-                    p0_signup = float(rowc["p0_signup"].iloc[0]) if not rowc.empty else 0.01
+                # ======= Interactive selection over the built audience =======
+                base = st.session_state.get("aud_base")
+                if not st.session_state.get("aud_built") or base is None or base.empty:
+                    st.info("Build an audience first to enable selection modes (Top N / Top % / Expected signups).")
+                else:
+                    st.markdown("**How many to target?**")
+                    c1, c2, _ = st.columns([1.5, 1.2, 1])
 
-                    # owners for that topic
-                    own_topic = (
-                        ev_topic[ev_topic["event_type"].str.lower().eq("signup")]
-                        .groupby("email")["msg_id"].nunique().gt(0)
+                    selection_mode = c1.radio(
+                        "Selection mode",
+                        ["Top N", "Top %", "Expected signups target"],
+                        horizontal=True,
+                        key="aud_sel_mode",
+                        help=("Top N: keep the N highest probabilities. "
+                            "Top %: keep the top X percentile by probability. "
+                            "Expected signups target: keep the smallest set whose summed p_signup reaches your target.")
                     )
-                    if not signups.empty and {"campaign", "email"}.issubset(signups.columns):
-                        sgn = signups.copy()
-                        sgn["email"] = sgn["email"].astype(str).str.strip().str.lower()
-                        camp2topic = _build_campaign_topic_map(campaigns)
-                        sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(
-                            sgn["campaign"].map(_extract_topic_from_text)
+
+                    # Always work on a sorted copy of the base audience
+                    df_sorted = base.sort_values(by=["p_signup", "S"], ascending=[False, False]).reset_index(drop=True)
+
+                    if selection_mode == "Top N":
+                        c2.number_input(
+                            "N",
+                            min_value=1,
+                            value=int(st.session_state.get("aud_sel_n", 500)),
+                            step=10,
+                            key="aud_sel_n"
                         )
-                        own_tab = (
-                            sgn[sgn["topic"] == chosen_from_rank]
-                            .groupby("email")["signup_id"].nunique().gt(0)
+                        n_keep = int(st.session_state["aud_sel_n"])
+                        n_keep = max(1, min(n_keep, len(df_sorted)))  # clamp to available rows
+                        df_sel = df_sorted.iloc[:n_keep].reset_index(drop=True)
+
+                    elif selection_mode == "Top %":
+                        c2.slider(
+                            "Percent",
+                            min_value=1,
+                            max_value=100,
+                            value=int(st.session_state.get("aud_sel_pct", 20)),
+                            step=1,
+                            key="aud_sel_pct"
                         )
-                        own_topic = own_topic.combine(own_tab, lambda a, b: bool(a) or bool(b)).fillna(False)
+                        pct_keep = int(st.session_state["aud_sel_pct"])
+                        # cutoff at percentile (higher prob = keep)
+                        cutoff = float(df_sorted["p_signup"].quantile(1 - pct_keep/100.0)) if len(df_sorted) else 1.0
+                        df_sel = df_sorted[df_sorted["p_signup"] >= cutoff].reset_index(drop=True)
 
-                    sends_u = sd_topic.groupby("email")["msg_id"].nunique().rename("S")
-                    signups_u = (
-                        ev_topic[ev_topic["event_type"].str.lower().eq("signup")]
-                        .groupby("email")["msg_id"].nunique().rename("Y")
+                    else:  # Expected signups target
+                        c2.number_input(
+                            "Target signups",
+                            min_value=0.5,
+                            value=float(st.session_state.get("aud_sel_target", 50.0)),
+                            step=1.0,
+                            key="aud_sel_target"
+                        )
+                        target = float(st.session_state["aud_sel_target"])
+                        cum = df_sorted["p_signup"].cumsum().values
+                        import numpy as np
+                        pos = int(np.searchsorted(cum, target, side="left"))
+                        pos = max(0, min(pos, len(df_sorted)-1))
+                        df_sel = df_sorted.iloc[:pos+1].reset_index(drop=True)
+
+                    # --- KPIs + table (use df_sel) ---
+                    k1, k2, k3 = st.columns(3)
+                    k1.metric("Eligible (base)", f"{len(df_sorted):,}")
+                    k2.metric("Selected", f"{len(df_sel):,}")
+                    k3.metric("Expected signups", f"{df_sel['p_signup'].sum():.1f}")
+
+                    st.dataframe(
+                        df_sel[["email", "S", "Y", "p_signup", "O", "C"]],
+                        use_container_width=True,
+                        height=360,
                     )
-                    unsubs_u = (
-                        ev_topic[ev_topic["event_type"].str.lower().eq("unsubscribe")]
-                        .groupby("email")["msg_id"].nunique().rename("U")
+
+                    # Optional: export + send to MO Assistant for the selection
+                    exp_col, mo_col = st.columns([1, 2])
+                    topic_slug = re.sub(r"[^a-z0-9]+", "_", str(st.session_state.get("aud_topic","")).lower()).strip("_") or "topic"
+                    csv_name = f"distribution_list_topic_{topic_slug}_selected.csv"
+                    exp_col.download_button(
+                        "Download selected (CSV)",
+                        data=df_sel[["email"]].to_csv(index=False).encode("utf-8"),
+                        file_name=csv_name,
+                        mime="text/csv",
                     )
-                    complaints_u = (
-                        ev_topic[ev_topic["event_type"].str.lower().eq("complaint")]
-                        .groupby("email")["msg_id"].nunique().rename("Q")
+                    mo_subject = mo_col.text_input(
+                        "Subject to use in MO/Editor",
+                        value=f"[{(st.session_state.get('aud_topic') or 'Campaign').title()}] New Campaign",
+                        key="subject_topic_selected",
+                        help="Will be prefilled when navigating to MO Assistant / Email Editor.",
                     )
-
-                    df_rank = (
-                        pd.DataFrame(index=pd.Index([], name="email"))
-                        .join(sends_u, how="outer")
-                        .join(signups_u, how="outer")
-                        .join(unsubs_u, how="outer")
-                        .join(complaints_u, how="outer")
-                        .reset_index()
-                    )
-                    # >>> FIX here as well
-                    df_rank = _ensure_num_cols(df_rank, ["S", "Y", "U", "Q"])
-
-                    if df_rank.empty:
-                        st.warning("No eligible recipients for the selected topic.")
-                    else:
-                        S_r = df_rank["S"]
-                        Y_r = df_rank["Y"]
-                        df_rank["p_signup"] = (Y_r + ALPHA * p0_signup) / (S_r + ALPHA)
-
-                        # basic eligibility (same as above)
-                        df_rank = df_rank[df_rank["S"] >= 1.0]
-                        df_rank = df_rank[(df_rank["U"] == 0.0) & (df_rank["Q"] == 0.0)]
-                        if exclude_owners:
-                            df_rank = df_rank[~df_rank["email"].map(own_topic).fillna(False)]
-
-                        df_rank["p_signup"] = pd.to_numeric(df_rank["p_signup"], errors="coerce").fillna(0.0)
-                        df_rank = df_rank.sort_values(by=["p_signup", "S"], ascending=[False, False]).head(topN_rank)
-
-                        st.session_state["mo_recipients"] = df_rank["email"].astype(str).tolist()
-                        st.session_state["mo_subject_live"] = subject_rank
-                        st.session_state["mo_topic"] = chosen_from_rank
+                    if st.button("Send selected to MO Assistant", type="primary", key="send_selected_to_mo"):
+                        st.session_state["mo_recipients"] = df_sel["email"].astype(str).tolist()
+                        st.session_state["mo_subject_live"] = mo_subject
+                        st.session_state["mo_topic"] = st.session_state.get("aud_topic") or ""
                         st.session_state["nav_redirect"] = "MO Assistant"
                         st.rerun()
+
+                    # Optional: clear state
+                    if st.button("Clear audience", key="clear_aud"):
+                        st.session_state["aud_built"] = False
+                        st.session_state["aud_base"] = None
+                        st.session_state["aud_topic"] = ""
+                        st.rerun()
+            else:
+                st.info("Build an audience to see selection controls.")
