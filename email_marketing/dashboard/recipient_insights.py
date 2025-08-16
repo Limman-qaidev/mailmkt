@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import numpy as np
 import streamlit as st
 import re
 
@@ -517,7 +516,6 @@ def render_recipient_insights() -> None:
 
     # ======================= TAB: Campaign Planning =======================
     with tab_campaign:
-        import numpy as np
 
         st.markdown("#### Campaign Planning")
 
@@ -696,7 +694,8 @@ def render_recipient_insights() -> None:
                     df = df[df["S"] >= float(min_s_topic)]
                     # 2) exclude owners if acquisition
                     if exclude_owners:
-                        df = df[~df["email"].map(own_topic).fillna(False)]
+                        mask_owner = df["email"].map(own_topic).fillna(False)
+                        df = df[~mask_owner]
                     # 3) exclude unsub/complaint
                     if "U" not in df.columns: df["U"] = 0.0
                     if "Q" not in df.columns: df["Q"] = 0.0
@@ -714,8 +713,9 @@ def render_recipient_insights() -> None:
                     if df.empty:
                         st.warning("No eligible recipients after applying filters.")
                     else:
-                        # Save base + topic in session, then rerun
-                        st.session_state["aud_base"]  = df.copy()
+                        # Persist sorted base audience once (deterministic ordering)
+                        df_base = df.sort_values(by=["p_signup", "S"], ascending=[False, False]).reset_index(drop=True)
+                        st.session_state["aud_base"]  = df_base
                         st.session_state["aud_topic"] = chosen_topic
                         st.session_state["aud_built"] = True
                         st.rerun()
@@ -757,106 +757,127 @@ def render_recipient_insights() -> None:
 
                 # ======= Interactive selection over the built audience =======
                 base = st.session_state.get("aud_base")
-                if not st.session_state.get("aud_built") or base is None or base.empty:
-                    st.info("Build an audience first to enable selection modes (Top N / Top % / Expected signups).")
-                else:
-                    st.markdown("**How many to target?**")
-                    c1, c2, _ = st.columns([1.5, 1.2, 1])
+                if st.session_state.get("aud_built") and isinstance(base, pd.DataFrame) and not base.empty:
+                    st.markdown(f"**Topic:** {st.session_state.get('aud_topic','')}")
 
-                    selection_mode = c1.radio(
-                        "Selection mode",
-                        ["Top N", "Top %", "Expected signups target"],
-                        horizontal=True,
-                        key="aud_sel_mode",
-                        help=("Top N: keep the N highest probabilities. "
-                            "Top %: keep the top X percentile by probability. "
-                            "Expected signups target: keep the smallest set whose summed p_signup reaches your target.")
-                    )
+                    # Probability bands (ya calculadas arriba en dfb)
+                    try:
+                        aud_work = dfb.copy()
+                    except NameError:
+                        aud_work = base.copy()
 
-                    # Always work on a sorted copy of the base audience
-                    df_sorted = base.sort_values(by=["p_signup", "S"], ascending=[False, False]).reset_index(drop=True)
+                    if aud_work is None or aud_work.empty:
+                        st.info("No recipients match the current filters. Adjust filters or bands.")
+                    else:
+                        # Asegurar dtype numérico para ordenar/quantiles (no altera tu lógica)
+                        aud_work["p_signup"] = pd.to_numeric(aud_work["p_signup"], errors="coerce").fillna(0.0)
 
-                    if selection_mode == "Top N":
-                        c2.number_input(
-                            "N",
-                            min_value=1,
-                            value=int(st.session_state.get("aud_sel_n", 500)),
-                            step=10,
-                            key="aud_sel_n"
+                        st.markdown("**How many to target?**")
+                        c1, c2, _sp = st.columns([1.6, 1.2, 0.2])
+
+                        selection_mode = c1.radio(
+                            "Selection mode",
+                            ["Top N", "Top %", "Expected signups target"],
+                            horizontal=True,
+                            key="aud_sel_mode",
+                            help=("Top N: keep the N highest probabilities. "
+                                "Top %: keep the top X percentile by probability. "
+                                "Expected signups target: keep the smallest set whose summed p_signup reaches your target.")
                         )
-                        n_keep = int(st.session_state["aud_sel_n"])
-                        n_keep = max(1, min(n_keep, len(df_sorted)))  # clamp to available rows
-                        df_sel = df_sorted.iloc[:n_keep].reset_index(drop=True)
 
-                    elif selection_mode == "Top %":
-                        c2.slider(
-                            "Percent",
-                            min_value=1,
-                            max_value=100,
-                            value=int(st.session_state.get("aud_sel_pct", 20)),
-                            step=1,
-                            key="aud_sel_pct"
+                        # Orden determinista por probabilidad; empates por S
+                        df_sorted = aud_work.sort_values(by=["p_signup", "S"], ascending=[False, False]).reset_index(drop=True)
+
+                        # === Widgets con keys separadas y sincronización explícita ===
+                        if selection_mode == "Top N":
+                            n_value = c2.number_input(
+                                "N",
+                                min_value=1,
+                                value=int(st.session_state.get("aud_sel_n", 500)),
+                                step=10,
+                                key="aud_sel_n_w",        # <- key de WIDGET distinta
+                                format="%d",
+                            )
+                            # sincroniza estado de negocio
+                            st.session_state["aud_sel_n"] = int(n_value)
+                            n_keep = max(1, min(st.session_state["aud_sel_n"], len(df_sorted)))
+                            df_sel = df_sorted.iloc[:n_keep].reset_index(drop=True)
+
+                        elif selection_mode == "Top %":
+                            pct_value = c2.slider(
+                                "Percent",
+                                min_value=1,
+                                max_value=100,
+                                value=int(st.session_state.get("aud_sel_pct", 20)),
+                                step=1,
+                                key="aud_sel_pct_w",      # <- key de WIDGET distinta
+                            )
+                            st.session_state["aud_sel_pct"] = int(pct_value)
+                            pct_keep = st.session_state["aud_sel_pct"]
+                            cutoff = float(df_sorted["p_signup"].quantile(1 - pct_keep / 100.0)) if len(df_sorted) else 1.0
+                            df_sel = df_sorted[df_sorted["p_signup"] >= cutoff].reset_index(drop=True)
+
+                        else:  # Expected signups target
+                            target_value = c2.number_input(
+                                "Target signups",
+                                min_value=0.5,
+                                value=float(st.session_state.get("aud_sel_target", 50.0)),
+                                step=1.0,
+                                key="aud_sel_target_w",   # <- key de WIDGET distinta
+                            )
+                            st.session_state["aud_sel_target"] = float(target_value)
+                            target = st.session_state["aud_sel_target"]
+                            cum = df_sorted["p_signup"].cumsum().values
+                            pos = int(np.searchsorted(cum, target, side="left"))
+                            pos = max(0, min(pos, len(df_sorted) - 1))
+                            df_sel = df_sorted.iloc[:pos + 1].reset_index(drop=True)
+
+                        # KPIs + tabla de la selección actual
+                        k1, k2, k3 = st.columns(3)
+                        k1.metric("Eligible (base)", f"{len(df_sorted):,}")
+                        k2.metric("Selected", f"{len(df_sel):,}")
+                        k3.metric("Expected signups", f"{df_sel['p_signup'].sum():.1f}")
+
+                        st.dataframe(
+                            df_sel[["email", "S", "Y", "p_signup", "O", "C"]],
+                            use_container_width=True,
+                            height=360,
                         )
-                        pct_keep = int(st.session_state["aud_sel_pct"])
-                        # cutoff at percentile (higher prob = keep)
-                        cutoff = float(df_sorted["p_signup"].quantile(1 - pct_keep/100.0)) if len(df_sorted) else 1.0
-                        df_sel = df_sorted[df_sorted["p_signup"] >= cutoff].reset_index(drop=True)
 
-                    else:  # Expected signups target
-                        c2.number_input(
-                            "Target signups",
-                            min_value=0.5,
-                            value=float(st.session_state.get("aud_sel_target", 50.0)),
-                            step=1.0,
-                            key="aud_sel_target"
+                        # Export + Send to Email Editor for the selection
+                        exp_col, mo_col = st.columns([1, 2])
+                        topic_slug = re.sub(r"[^a-z0-9]+", "_", str(st.session_state.get("aud_topic", "")).lower()).strip("_") or "topic"
+                        csv_name = f"distribution_list_topic_{topic_slug}_selected.csv"
+
+                        exp_col.download_button(
+                            "Download selected (CSV)",
+                            data=df_sel[["email"]].to_csv(index=False).encode("utf-8"),
+                            file_name=csv_name,
+                            mime="text/csv",
                         )
-                        target = float(st.session_state["aud_sel_target"])
-                        cum = df_sorted["p_signup"].cumsum().values
-                        import numpy as np
-                        pos = int(np.searchsorted(cum, target, side="left"))
-                        pos = max(0, min(pos, len(df_sorted)-1))
-                        df_sel = df_sorted.iloc[:pos+1].reset_index(drop=True)
 
-                    # --- KPIs + table (use df_sel) ---
-                    k1, k2, k3 = st.columns(3)
-                    k1.metric("Eligible (base)", f"{len(df_sorted):,}")
-                    k2.metric("Selected", f"{len(df_sel):,}")
-                    k3.metric("Expected signups", f"{df_sel['p_signup'].sum():.1f}")
+                        ed_subject = mo_col.text_input(
+                            "Subject to use in Email Editor",
+                            value=f"[{(st.session_state.get('aud_topic') or 'Campaign').title()}] New Campaign",
+                            key="subject_topic_selected",
+                            help="Will be prefilled in the Email Editor.",
+                        )
 
-                    st.dataframe(
-                        df_sel[["email", "S", "Y", "p_signup", "O", "C"]],
-                        use_container_width=True,
-                        height=360,
-                    )
+                        if st.button("Send to Email Editor", type="primary", key="send_selected_to_email_editor"):
+                            # Email Editor prefill: these are exactly the keys it pop()s on load
+                            st.session_state["mo_recipients"] = df_sel["email"].astype(str).tolist()
+                            # Email Editor mira primero 'mo_subject_live' y luego 'mo_subject'
+                            st.session_state["mo_subject_live"] = ed_subject
+                            st.session_state["mo_topic"] = st.session_state.get("aud_topic") or ""
+                            st.session_state["nav_redirect"] = "Email Editor"
+                            st.rerun()
 
-                    # Optional: export + send to MO Assistant for the selection
-                    exp_col, mo_col = st.columns([1, 2])
-                    topic_slug = re.sub(r"[^a-z0-9]+", "_", str(st.session_state.get("aud_topic","")).lower()).strip("_") or "topic"
-                    csv_name = f"distribution_list_topic_{topic_slug}_selected.csv"
-                    exp_col.download_button(
-                        "Download selected (CSV)",
-                        data=df_sel[["email"]].to_csv(index=False).encode("utf-8"),
-                        file_name=csv_name,
-                        mime="text/csv",
-                    )
-                    mo_subject = mo_col.text_input(
-                        "Subject to use in MO/Editor",
-                        value=f"[{(st.session_state.get('aud_topic') or 'Campaign').title()}] New Campaign",
-                        key="subject_topic_selected",
-                        help="Will be prefilled when navigating to MO Assistant / Email Editor.",
-                    )
-                    if st.button("Send selected to MO Assistant", type="primary", key="send_selected_to_mo"):
-                        st.session_state["mo_recipients"] = df_sel["email"].astype(str).tolist()
-                        st.session_state["mo_subject_live"] = mo_subject
-                        st.session_state["mo_topic"] = st.session_state.get("aud_topic") or ""
-                        st.session_state["nav_redirect"] = "MO Assistant"
-                        st.rerun()
+                        # (Opcional) clear
+                        if st.button("Clear audience", key="clear_aud"):
+                            st.session_state["aud_built"] = False
+                            st.session_state["aud_base"] = None
+                            st.session_state["aud_topic"] = ""
+                            st.rerun()
 
-                    # Optional: clear state
-                    if st.button("Clear audience", key="clear_aud"):
-                        st.session_state["aud_built"] = False
-                        st.session_state["aud_base"] = None
-                        st.session_state["aud_topic"] = ""
-                        st.rerun()
             else:
                 st.info("Build an audience to see selection controls.")
