@@ -282,7 +282,7 @@ def render_email_editor() -> None:
 
     # ---------- Modes (load/replace the working base) ----------
     has_mo = bool(incoming_mo or st.session_state.get("recipient_base"))
-    modes = ["Upload list", "By campaign type"]
+    modes = ["Upload list"]
     if has_mo:
         modes.insert(0, "From MO Assistant (preloaded)")
     mode = st.radio("Recipient source", modes, index=0 if has_mo else 0)

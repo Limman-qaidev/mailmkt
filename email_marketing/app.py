@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import base64
 from pathlib import Path
 from urllib.parse import quote
 
@@ -170,6 +171,68 @@ def _render_sidebar_avatar_for_page(page: str, size_px: int = 120) -> None:
         st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
 
 
+# --- Brand helpers (MauBank logo) -----------------------------------------
+
+def _load_maubank_logo_data_uri() -> str | None:
+    """Return a data: URI for the MauBank logo (prefer SVG, fallback PNG)."""
+    try:
+        static_dir = Path(__file__).resolve().parent / "dashboard" / "static"
+        candidates = ["logo.svg", "logo.png", "logo@2x.png"]
+        for fname in candidates:
+            p = static_dir / fname
+            if p.exists():
+                if p.suffix.lower() == ".svg":
+                    svg = p.read_text(encoding="utf-8")
+                    return f"data:image/svg+xml;utf8,{quote(svg)}"
+                else:
+                    b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                    return f"data:image/png;base64,{b64}"
+    except Exception:
+        pass
+    return None
+
+
+def _render_brandbar(title: str = "Mail Watcher") -> None:
+    """Compact brand bar at the very top of the main column."""
+    data_uri = _load_maubank_logo_data_uri()
+    if not data_uri:
+        return
+
+    # Minimal, elegant bar. Adapts to light/dark themes reasonably well.
+    html = f"""
+    <div style="
+        display:flex; align-items:center; gap:12px;
+        padding:10px 14px; margin:0 0 8px 0;
+        border:1px solid rgba(0,0,0,0.08);
+        background: rgba(250,250,250,0.6);
+        backdrop-filter: blur(6px);
+        border-radius:12px;
+    ">
+        <img src="{data_uri}" alt="MauBank" style="width:28px; height:28px; display:block;"/>
+        <div style="font-weight:700; font-size:15px; letter-spacing:.2px;">
+            MauBank <span style="opacity:.7">— {title}</span>
+        </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def _render_sidebar_brand(mini: bool = True) -> None:
+    """Centered MauBank logo in the sidebar (above navigation)."""
+    data_uri = _load_maubank_logo_data_uri()
+    if not data_uri:
+        return
+    size = 64 if mini else 96
+    st.sidebar.markdown(
+        f"""
+        <div style="display:flex; justify-content:center; margin:6px 0 4px;">
+            <img src="{data_uri}" alt="MauBank" width="{size}" height="{size}" />
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     """Render the Streamlit dashboard and optionally launch the tracking API."""
     st.set_page_config(
@@ -180,6 +243,8 @@ def main() -> None:
     style.apply_theme()
     if hasattr(style, "apply_matplotlib_theme"):
         style.apply_matplotlib_theme()
+    # Brand bar (visible en todas las páginas)
+    # _render_brandbar(title="Mail Watcher")
 
     if os.environ.get("RUN_TRACKING_WITH_STREAMLIT", "false").lower() in {"1", "true", "yes"}:
         _start_tracking_server()
@@ -207,7 +272,9 @@ def main() -> None:
             del st.session_state["nav"]  # ensure the selectbox respects `index`
 
     # Sidebar title and page selector
-    st.sidebar.title("Mail watcher")
+    _render_sidebar_brand(mini=True)
+    st.sidebar.markdown("### Mail Watcher")
+
     page = st.sidebar.selectbox("Navigate", pages, index=default_index, key="nav")
 
     # Sidebar avatar (page-aware). Hidden on "MO Assistant".
