@@ -481,15 +481,38 @@ def render_email_editor() -> None:
     # Side-by-side preview: Final vs Excluded
     col_left, col_right = st.columns(2)
     with col_left:
-        with st.expander("Final recipients (after exclusions)", expanded=True):
+        with st.expander("Final recipients (after exclusions)", expanded=False):
             # Cap visual para rendimiento
             df_final = pd.DataFrame({"email": final_recipients[:3000]})
             st.dataframe(df_final, use_container_width=True)
     with col_right:
-        with st.expander("Excluded recipients (audit)", expanded=True):
+        with st.expander("Excluded recipients (audit)", expanded=False):
             excl_sorted = sorted(exclusions)
             df_excl = pd.DataFrame({"email": excl_sorted[:3000]})
             st.dataframe(df_excl, use_container_width=True)
+
+            # NEW: select excluded emails to re-include (undo exclusion)
+            to_include = st.multiselect(
+                "Select emails to re-include",
+                options=excl_sorted[:3000],
+                default=[],
+                key="recip_multiinclude",
+                help="Pick excluded addresses to add back to the final recipients."
+            )
+            c_inc1, c_inc2 = st.columns([1, 1])
+            with c_inc1:
+                if st.button("Re-include selected", key="btn_reinclude"):
+                    # Remove chosen emails from the exclusions set
+                    before = len(exclusions)
+                    exclusions.difference_update(to_include)
+                    st.session_state["recipient_exclusions"] = sorted(exclusions)
+                    st.success(f"Re-included {before - len(exclusions)} address(es).")
+            with c_inc2:
+                if st.button("Clear exclusions", key="btn_clear_all_excl"):
+                    exclusions.clear()
+                    st.session_state["recipient_exclusions"] = []
+                    st.info("Exclusions cleared.")
+
 
     st.markdown("---")
 

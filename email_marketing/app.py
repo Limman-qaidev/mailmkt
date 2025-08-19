@@ -275,7 +275,22 @@ def main() -> None:
     _render_sidebar_brand(mini=True)
     st.sidebar.markdown("### Mail Watcher")
 
-    page = st.sidebar.selectbox("Navigate", pages, index=default_index, key="nav")
+    # Keep current page stable across reruns unless a redirect was requested
+    current_page = st.session_state.get("nav", None)
+    if redirect_target and redirect_target in pages:
+        default_index = pages.index(redirect_target)
+    elif current_page in pages:
+        default_index = pages.index(current_page)
+    else:
+        default_index = 0  # fallback
+
+    page = st.sidebar.selectbox(
+        "Navigate",
+        pages,
+        index=default_index,
+        key="nav",
+    )
+
 
     # Sidebar avatar (page-aware). Hidden on "MO Assistant".
     _render_sidebar_avatar_for_page(page, size_px=120)

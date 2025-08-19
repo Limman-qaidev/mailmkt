@@ -444,26 +444,62 @@ def render_campaign_metrics_view() -> None:
             )
             st.plotly_chart(fig_cmp, use_container_width=True)
 
-            # Normalized daily engagement since launch
-            df = events.merge(sends, on="msg_id", how="left", suffixes=("", "_send"))
+            # Normalized daily engagement since launch (include signups)
+            df_events = events.copy()
+            if "event_ts" not in df_events.columns and "ts" in df_events.columns:
+                df_events["event_ts"] = pd.to_datetime(df_events["ts"], errors="coerce")
+            else:
+                df_events["event_ts"] = pd.to_datetime(df_events["event_ts"], errors="coerce")
+
+            df_sends = sends.copy()
+            if "send_ts" in df_sends.columns:
+                df_sends["send_ts"] = pd.to_datetime(df_sends["send_ts"], errors="coerce")
+
+            df = df_events.merge(df_sends, on="msg_id", how="left", suffixes=("", "_send"))
+
             df_list = []
             for cid in campaign_ids:
-                ev = df[df["campaign"] == cid]
-                if ev.empty:
-                    continue
-                send_ts = ev["event_ts"].min()
-                ev = ev.assign(days_since=((ev["event_ts"] - send_ts).dt.days))
+                ev = df[df["campaign"] == cid].copy()
+
+                # Append signups as pseudo-events for this campaign
+                su = pd.DataFrame()
+                if not signups.empty and "campaign" in signups.columns:
+                    su = signups[signups["campaign"] == cid].copy()
+                    if not su.empty:
+                        su["event_ts"] = pd.to_datetime(su.get("signup_ts"), errors="coerce")
+                        su = su.loc[:, ["event_ts"]]
+                        su["event_type"] = "signup"
+                        ev = pd.concat([ev, su], ignore_index=True, sort=False)
+
+                # Baseline: first send_ts for the campaign; fallback to earliest event_ts
+                base_ts = pd.NaT
+                if "campaign" in df_sends.columns and "send_ts" in df_sends.columns:
+                    s_all = df_sends.loc[df_sends["campaign"] == cid, "send_ts"]
+                    if not s_all.empty:
+                        base_ts = s_all.min()
+                if pd.isna(base_ts) and "event_ts" in ev.columns:
+                    base_ts = ev["event_ts"].min()
+
+                if pd.isna(base_ts):
+                    continue  # nothing to plot for this campaign
+
+                ev = ev[pd.notna(ev["event_ts"])].copy()
+                ev["days_since"] = (ev["event_ts"] - base_ts).dt.days
+
                 daily = (
                     ev.groupby(["days_since", "event_type"])
                     .size()
                     .reset_index(name="count")
                     .pivot(index="days_since", columns="event_type", values="count")
                     .fillna(0)
-                ).reset_index()
+                    .reset_index()
+                )
                 daily["campaign_id"] = cid
                 df_list.append(daily)
+
             if df_list:
                 ts_df = pd.concat(df_list, ignore_index=True).fillna(0)
+
                 event_map = {
                     "open_rate": "open",
                     "ctr": "click",
@@ -471,6 +507,11 @@ def render_campaign_metrics_view() -> None:
                     "unsubscribe_rate": "unsubscribe",
                 }
                 event_col = event_map.get(metric, "open")
+
+                # If the chosen metric column is missing (e.g., no signups), add zeros to avoid crash
+                if event_col not in ts_df.columns:
+                    ts_df[event_col] = 0
+
                 st.subheader("Normalized Daily Engagement")
                 fig_ts_cmp = px.line(
                     ts_df,
@@ -481,6 +522,7 @@ def render_campaign_metrics_view() -> None:
                     title=f"{metric.replace('_', ' ').title()} Over Time by Campaign",
                 )
                 st.plotly_chart(fig_ts_cmp, use_container_width=True)
+
         return  # end Compare campaigns
 
     # ======================= MODE 3/4: Period-based =======================
