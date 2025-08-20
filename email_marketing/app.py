@@ -233,6 +233,23 @@ def _render_sidebar_brand(mini: bool = True) -> None:
     )
 
 
+##############################################################
+##  ESTO ES SOLO PARA QUE FUNCIONE EN STREAMLIT CLOUD
+##############################################################
+def _load_email_env_from_secrets() -> None:
+    # Copia de st.secrets → os.environ si aún no está definido
+    keys = (
+        "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS",
+        "SMTP_STARTTLS", "SMTP_USE_TLS", "SMTP_SENDER_FROM",
+    )
+    try:
+        for k in keys:
+            if k in st.secrets and not os.environ.get(k):
+                os.environ[k] = str(st.secrets[k])
+    except Exception:
+        pass
+
+
 def main() -> None:
     """Render the Streamlit dashboard and optionally launch the tracking API."""
     st.set_page_config(
@@ -243,6 +260,11 @@ def main() -> None:
     style.apply_theme()
     if hasattr(style, "apply_matplotlib_theme"):
         style.apply_matplotlib_theme()
+
+    ###########################################################
+    ## ESTO ES SOLO PARA QUE FUNCIONE EN STREAMLIT CLOUD
+    ###########################################################
+    _load_email_env_from_secrets()
     # Brand bar (visible en todas las páginas)
     # _render_brandbar(title="Mail Watcher")
 
