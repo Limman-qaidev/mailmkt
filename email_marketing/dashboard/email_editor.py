@@ -566,66 +566,49 @@ def render_email_editor() -> None:
                 msg_id = uuid.uuid4().hex
 
                 timestamp = int(time.time())
+
+                # QS de recursos
                 logo_qs = urllib.parse.urlencode(
                     {"msg_id": msg_id, "ts": timestamp, "campaign": subject_value}
                 )
-                # --- build logo (quedará DEBAJO del texto) ---
-                logo_tag = (
-                    f'<div style="margin:12px 0 8px 0">'
-                    f'  <img src="{tracking_url}/logo?{logo_qs}" alt="Company Logo" width="200"'
-                    f'       style="display:block;border:0;outline:none;text-decoration:none;">'
-                    f'</div>'
+                click_qs = urllib.parse.urlencode(
+                    {"msg_id": msg_id, "url": "https://example.com", "campaign": subject_value}
+                )
+                unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
+                comp_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
+
+                # Barra de enlaces horizontal bajo el logo (tabla = máxima compatibilidad)
+                links_row = (
+                    f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                    f'style="margin-top:8px;">'
+                    f'<tr>'
+                    f'<td style="padding-right:16px;">'
+                    f'<a href="{tracking_url}/click?{click_qs}">Click here</a>'
+                    f'</td>'
+                    f'<td style="padding-right:16px;">'
+                    f'<a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a>'
+                    f'</td>'
+                    f'<td>'
+                    f'<a href="{tracking_url}/complaint?{comp_qs}">Report spam</a>'
+                    f'</td>'
+                    f'</tr>'
+                    f'</table>'
                 )
 
-                # --- build links HORIZONTALMENTE (una sola fila) ---
-                click_href      = f'{tracking_url}/click?{click_qs}'
-                unsub_href      = f'{tracking_url}/unsubscribe?{unsub_qs}'
-                complaint_href  = f'{tracking_url}/complaint?{comp_qs}'
-
-                links_row = f"""
-                <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin:12px 0 0 0;">
-                <tr>
-                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;padding-right:16px;">
-                    <a href="{click_href}">Click here</a>
-                    </td>
-                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;padding-right:16px;">
-                    <a href="{unsub_href}">Unsubscribe</a>
-                    </td>
-                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;">
-                    <a href="{complaint_href}">Report spam</a>
-                    </td>
-                </tr>
-                </table>
-                """
-
-                # --- HTML final: TEXTO -> LOGO -> ENLACES EN FILA ---
+                # Cuerpo: texto → logo → fila de enlaces
                 full_html = f"""<!DOCTYPE html>
                 <html>
-                <head>
-                <meta charset="utf-8">
-                <meta name="x-apple-disable-message-reformatting">
-                <meta name="format-detection" content="telephone=no">
-                </head>
-                <body style="margin:0;padding:0;background:#ffffff;">
-                <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
-                    <tr>
-                    <td align="center" style="padding:20px 12px;">
-                        <table role="presentation" width="600" border="0" cellspacing="0" cellpadding="0" style="width:600px;max-width:100%;">
-                        <tr>
-                            <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.45;color:#111827;">
-                            <div style="margin:0 0 12px 0;">
-                                {html_body}   <!-- tu contenido en HTML, primero -->
-                            </div>
-                            {logo_tag}      <!-- logo debajo del texto -->
-                            {links_row}     <!-- enlaces en una sola fila -->
-                            </td>
-                        </tr>
-                        </table>
-                    </td>
-                    </tr>
-                </table>
+                <head><meta charset="utf-8"></head>
+                <body>
+                <div>{html_body}</div>
+                <div style="margin:12px 0 4px 0;">
+                    <img src="{tracking_url}/logo?{logo_qs}"
+                        alt="Company Logo" width="200" style="display:block;"/>
+                </div>
+                {links_row}
                 </body>
                 </html>"""
+
 
                 try:
                     sender.send_email(
@@ -642,7 +625,6 @@ def render_email_editor() -> None:
                     st.error(f"Failed to send to {email}: {exc}")
 
                 progress.progress(i / total)
-
 
     if hasattr(st, "toast"):
         st.toast(f"Campaign sent to {total} recipients.")
