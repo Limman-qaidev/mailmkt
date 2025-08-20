@@ -569,78 +569,31 @@ def render_email_editor() -> None:
                 logo_qs = urllib.parse.urlencode(
                     {"msg_id": msg_id, "ts": timestamp, "campaign": subject_value}
                 )
-                # Logo arriba
                 logo_tag = (
-                    f'<p style="margin:0 0 16px 0;text-align:center;">'
-                    f'  <img src="{tracking_url}/logo?{logo_qs}" alt="Company Logo" width="200" '
-                    f'       style="display:inline-block;border:0;outline:none;text-decoration:none;"/>'
-                    f'</p>'
+                    f'<p><img src="{tracking_url}/logo?{logo_qs}" '
+                    'alt="Company Logo" width="200"/></p>'
                 )
 
-                # Enlaces (trackeados) — los pondremos en una fila, uno al lado del otro
                 click_qs = urllib.parse.urlencode(
                     {"msg_id": msg_id, "url": "https://example.com", "campaign": subject_value}
                 )
+                click_tag = f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
+
                 unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
-                comp_qs  = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
+                unsub_tag = f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a></p>'
 
-                links_row = f"""
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin:16px 0 0 0;">
-                <tr>
-                    <td align="center" style="padding:6px;">
-                    <a href="{tracking_url}/click?{click_qs}"
-                        style="background:#0B5FFF;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;font-size:14px;
-                                text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block;">
-                        View offer
-                    </a>
-                    </td>
-                    <td align="center" style="padding:6px;">
-                    <a href="{tracking_url}/unsubscribe?{unsub_qs}"
-                        style="color:#6B7280;font-family:Arial,Helvetica,sans-serif;font-size:13px;text-decoration:underline;display:inline-block;">
-                        Unsubscribe
-                    </a>
-                    </td>
-                    <td align="center" style="padding:6px;">
-                    <a href="{tracking_url}/complaint?{comp_qs}"
-                        style="color:#6B7280;font-family:Arial,Helvetica,sans-serif;font-size:13px;text-decoration:underline;display:inline-block;">
-                        Report spam
-                    </a>
-                    </td>
-                </tr>
-                </table>
-                """
+                comp_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
+                complaint_tag = f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam</a></p>'
 
-                # Cuerpo del email: debajo del logo, y los enlaces en la fila inferior
                 full_html = f"""<!DOCTYPE html>
                 <html>
-                <head>
-                <meta charset="utf-8">
-                <meta name="x-apple-disable-message-reformatting">
-                <meta name="format-detection" content="telephone=no">
-                </head>
-                <body style="margin:0;padding:0;background:#ffffff;">
-                <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
-                    <tr>
-                    <td align="center" style="padding:20px 12px;">
-                        <!-- Contenedor centrado -->
-                        <table role="presentation" width="600" border="0" cellspacing="0" cellpadding="0" style="width:600px;max-width:100%;">
-                        <tr>
-                            <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.45;color:#111827;">
-                            {logo_tag}
-                            <!-- Aquí va el HTML que escribes en el editor -->
-                            <div style="margin:0 0 8px 0;">
-                                {html_body}
-                            </div>
-                            {links_row}
-                            </td>
-                        </tr>
-                        </table>
-                    </td>
-                    </tr>
-                </table>
+                <head><meta charset="utf-8"></head>
+                <body>
+                    {html_body}
+                    {logo_tag}
+                    {click_tag}{unsub_tag}{complaint_tag}
                 </body>
                 </html>"""
-
 
                 try:
                     sender.send_email(
