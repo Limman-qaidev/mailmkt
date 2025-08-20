@@ -48,6 +48,18 @@ try:
 except ImportError:
     tracking_server = None  # type: ignore[assignment]
 
+# --- load secrets into env early ---
+try:
+    from streamlit.runtime.secrets import secrets
+    for key in (
+        "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS",
+        "SMTP_SENDER_FROM", "SMTP_USE_SSL", "SMTP_DEBUG"
+    ):
+        if key in secrets:
+            os.environ[key] = str(secrets[key])
+except Exception:
+    pass
+
 
 def _start_tracking_server() -> None:
     """Start the tracking server in a background thread if enabled."""
