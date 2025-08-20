@@ -237,17 +237,33 @@ def _render_sidebar_brand(mini: bool = True) -> None:
 ##  ESTO ES SOLO PARA QUE FUNCIONE EN STREAMLIT CLOUD
 ##############################################################
 def _load_email_env_from_secrets() -> None:
-    # Copia de st.secrets → os.environ si aún no está definido
-    keys = (
-        "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS",
-        "SMTP_STARTTLS", "SMTP_USE_TLS", "SMTP_SENDER_FROM",
-    )
+    """
+    Copy Streamlit secrets into os.environ using the exact names that SMTPSender expects.
+    We also duplicate to common aliases so nothing breaks locally.
+    """
+    # source secret -> list of env targets
+    alias_map = {
+        "SMTP_HOST":      ["SMTP_HOST", "SMTP_SERVER"],
+        "SMTP_PORT":      ["SMTP_PORT", "SMTP_SERVER_PORT"],
+        "SMTP_USER":      ["SMTP_USER", "SMTP_USERNAME"],
+        # IMPORTANT: your secrets may use SMTP_PASS; SMTPSender expects SMTP_PASSWORD or SMTP_APP_PWD
+        "SMTP_PASS":      ["SMTP_PASSWORD", "SMTP_APP_PWD"],
+        # Optional/diagnostic
+        "SMTP_USE_SSL":   ["SMTP_USE_SSL"],   # "true"/"false" (default false → STARTTLS)
+        "SMTP_DEBUG":     ["SMTP_DEBUG"],     # "true"/"false"
+        # Optional sender override (not used by SMTPSender by default, pero no estorba)
+        "SMTP_SENDER_FROM": ["SMTP_SENDER_FROM"],
+    }
     try:
-        for k in keys:
-            if k in st.secrets and not os.environ.get(k):
-                os.environ[k] = str(st.secrets[k])
+        for src, targets in alias_map.items():
+            if src in st.secrets:
+                for dst in targets:
+                    if not os.environ.get(dst):
+                        os.environ[dst] = str(st.secrets[src])
     except Exception:
+        # don't crash UI if secrets aren't configured
         pass
+
 
 
 def main() -> None:
