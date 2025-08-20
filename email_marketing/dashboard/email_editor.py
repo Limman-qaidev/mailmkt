@@ -569,73 +569,63 @@ def render_email_editor() -> None:
                 logo_qs = urllib.parse.urlencode(
                     {"msg_id": msg_id, "ts": timestamp, "campaign": subject_value}
                 )
+                # --- build logo (quedará DEBAJO del texto) ---
                 logo_tag = (
-                    f'<p style="margin:0 0 12px 0;"><img src="{tracking_url}/logo?{logo_qs}" '
-                    'alt="Company Logo" width="200" style="display:block;border:0;outline:0;"/></p>'
+                    f'<div style="margin:12px 0 8px 0">'
+                    f'  <img src="{tracking_url}/logo?{logo_qs}" alt="Company Logo" width="200"'
+                    f'       style="display:block;border:0;outline:none;text-decoration:none;">'
+                    f'</div>'
                 )
 
-                # QS for tracked links
-                click_qs = urllib.parse.urlencode(
-                    {"msg_id": msg_id, "url": "https://example.com", "campaign": subject_value}
-                )
-                unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
-                comp_qs  = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
+                # --- build links HORIZONTALMENTE (una sola fila) ---
+                click_href      = f'{tracking_url}/click?{click_qs}'
+                unsub_href      = f'{tracking_url}/unsubscribe?{unsub_qs}'
+                complaint_href  = f'{tracking_url}/complaint?{comp_qs}'
 
-                # Row with the three links (button + two links) side-by-side
                 links_row = f"""
-                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-top:16px;">
-                    <tr>
-                        <td align="center" style="padding:6px;">
-                        <a href="{tracking_url}/click?{click_qs}"
-                            style="background:#0B5FFF;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;font-size:14px;
-                                    text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block;">
-                            View offer
-                        </a>
-                        </td>
-                        <td align="center" style="padding:6px;">
-                        <a href="{tracking_url}/unsubscribe?{unsub_qs}"
-                            style="color:#1a73e8;font-family:Arial,Helvetica,sans-serif;font-size:13px;text-decoration:underline;display:inline-block;">
-                            Unsubscribe
-                        </a>
-                        </td>
-                        <td align="center" style="padding:6px;">
-                        <a href="{tracking_url}/complaint?{comp_qs}"
-                            style="color:#1a73e8;font-family:Arial,Helvetica,sans-serif;font-size:13px;text-decoration:underline;display:inline-block;">
-                            Report spam
-                        </a>
-                        </td>
-                    </tr>
-                    </table>
-                    """
+                <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin:12px 0 0 0;">
+                <tr>
+                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;padding-right:16px;">
+                    <a href="{click_href}">Click here</a>
+                    </td>
+                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;padding-right:16px;">
+                    <a href="{unsub_href}">Unsubscribe</a>
+                    </td>
+                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;">
+                    <a href="{complaint_href}">Report spam</a>
+                    </td>
+                </tr>
+                </table>
+                """
 
-                # Email HTML: logo on top, then your HTML body, then the horizontal links row
+                # --- HTML final: TEXTO -> LOGO -> ENLACES EN FILA ---
                 full_html = f"""<!DOCTYPE html>
-                        <html>
-                        <head>
-                        <meta charset="utf-8">
-                        <meta name="x-apple-disable-message-reformatting">
-                        <meta name="format-detection" content="telephone=no">
-                        </head>
-                        <body style="margin:0;padding:0;background:#ffffff;">
-                        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
-                            <tr>
-                            <td align="center" style="padding:20px 12px;">
-                                <table role="presentation" width="600" border="0" cellspacing="0" cellpadding="0" style="width:600px;max-width:100%;">
-                                <tr>
-                                    <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.45;color:#111827;">
-                                    <div style="margin:0 0 12px 0;">
-                                        {html_body}      <!-- TEXTO PRIMERO -->
-                                    </div>
-                                    {logo_tag}         <!-- LOGO DESPUÉS -->
-                                    {links_row}        <!-- ENLACES EN UNA FILA -->
-                                    </td>
-                                </tr>
-                                </table>
+                <html>
+                <head>
+                <meta charset="utf-8">
+                <meta name="x-apple-disable-message-reformatting">
+                <meta name="format-detection" content="telephone=no">
+                </head>
+                <body style="margin:0;padding:0;background:#ffffff;">
+                <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+                    <tr>
+                    <td align="center" style="padding:20px 12px;">
+                        <table role="presentation" width="600" border="0" cellspacing="0" cellpadding="0" style="width:600px;max-width:100%;">
+                        <tr>
+                            <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.45;color:#111827;">
+                            <div style="margin:0 0 12px 0;">
+                                {html_body}   <!-- tu contenido en HTML, primero -->
+                            </div>
+                            {logo_tag}      <!-- logo debajo del texto -->
+                            {links_row}     <!-- enlaces en una sola fila -->
                             </td>
-                            </tr>
+                        </tr>
                         </table>
-                        </body>
-                        </html>"""
+                    </td>
+                    </tr>
+                </table>
+                </body>
+                </html>"""
 
                 try:
                     sender.send_email(
