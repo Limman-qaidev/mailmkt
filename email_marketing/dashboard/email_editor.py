@@ -570,30 +570,72 @@ def render_email_editor() -> None:
                     {"msg_id": msg_id, "ts": timestamp, "campaign": subject_value}
                 )
                 logo_tag = (
-                    f'<p><img src="{tracking_url}/logo?{logo_qs}" '
-                    'alt="Company Logo" width="200"/></p>'
+                    f'<p style="margin:0 0 12px 0;"><img src="{tracking_url}/logo?{logo_qs}" '
+                    'alt="Company Logo" width="200" style="display:block;border:0;outline:0;"/></p>'
                 )
 
+                # QS for tracked links
                 click_qs = urllib.parse.urlencode(
                     {"msg_id": msg_id, "url": "https://example.com", "campaign": subject_value}
                 )
-                click_tag = f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
-
                 unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
-                unsub_tag = f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a></p>'
+                comp_qs  = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
 
-                comp_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
-                complaint_tag = f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam</a></p>'
+                # Row with the three links (button + two links) side-by-side
+                links_row = f"""
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-top:16px;">
+    <tr>
+        <td align="center" style="padding:6px;">
+        <a href="{tracking_url}/click?{click_qs}"
+            style="background:#0B5FFF;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;font-size:14px;
+                    text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block;">
+            View offer
+        </a>
+        </td>
+        <td align="center" style="padding:6px;">
+        <a href="{tracking_url}/unsubscribe?{unsub_qs}"
+            style="color:#1a73e8;font-family:Arial,Helvetica,sans-serif;font-size:13px;text-decoration:underline;display:inline-block;">
+            Unsubscribe
+        </a>
+        </td>
+        <td align="center" style="padding:6px;">
+        <a href="{tracking_url}/complaint?{comp_qs}"
+            style="color:#1a73e8;font-family:Arial,Helvetica,sans-serif;font-size:13px;text-decoration:underline;display:inline-block;">
+            Report spam
+        </a>
+        </td>
+    </tr>
+    </table>
+    """
 
+                # Email HTML: logo on top, then your HTML body, then the horizontal links row
                 full_html = f"""<!DOCTYPE html>
-                <html>
-                <head><meta charset="utf-8"></head>
-                <body>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <meta name="x-apple-disable-message-reformatting">
+    <meta name="format-detection" content="telephone=no">
+    </head>
+    <body style="margin:0;padding:0;background:#ffffff;">
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+        <tr>
+        <td align="center" style="padding:20px 12px;">
+            <table role="presentation" width="600" border="0" cellspacing="0" cellpadding="0" style="width:600px;max-width:100%;">
+            <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.45;color:#111827;">
+                {logo_tag}
+                <div style="margin:0 0 8px 0;">
                     {html_body}
-                    {logo_tag}
-                    {click_tag}{unsub_tag}{complaint_tag}
-                </body>
-                </html>"""
+                </div>
+                {links_row}
+                </td>
+            </tr>
+            </table>
+        </td>
+        </tr>
+    </table>
+    </body>
+    </html>"""
 
                 try:
                     sender.send_email(
@@ -610,6 +652,7 @@ def render_email_editor() -> None:
                     st.error(f"Failed to send to {email}: {exc}")
 
                 progress.progress(i / total)
+
 
     if hasattr(st, "toast"):
         st.toast(f"Campaign sent to {total} recipients.")
