@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 """Web server for tracking email engagement events.
 
@@ -11,8 +12,6 @@ or embedded inside the Streamlit dashboard through :func:`create_app`.
 """
 # email_marketing/tracking/server.py
 """Web server for tracking email engagement events (SQLite local / Postgres Neon)."""
-
-from __future__ import annotations
 
 import base64
 import datetime as dt
