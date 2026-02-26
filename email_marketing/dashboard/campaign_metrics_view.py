@@ -406,13 +406,12 @@ def render_campaign_metrics_view() -> None:
             if "campaign_id" not in cmp_df.columns:
                 cmp_df = cmp_df.rename(columns={cmp_df.columns[0]: "campaign_id"})
             cmp_df = cmp_df[cmp_df["campaign_id"].isin(campaign_ids)]
-            metric_label = metric.replace("_", " ").title()
             fig_cmp = px.bar(
                 cmp_df,
                 x="campaign_id",
                 y=metric,
-                labels={"campaign_id": "Campaign", metric: metric_label},
-                title=f"Comparison of {metric_label} Across Campaigns",
+                labels={"campaign_id": "Campaign", metric: metric.replace("_", " ").title()},
+                title=f"Comparison of {metric.replace('_', ' ').title()} Across Campaigns",
                 barmode="group",
             )
             st.plotly_chart(fig_cmp, use_container_width=True)
@@ -495,7 +494,8 @@ def render_campaign_metrics_view() -> None:
                         # metric.split("_")[0]: "Count",
                         event_col: "Count",
                     },
-                    title=f"{metric_label} Over Time by Campaign",
+                    title=f"{metric.replace(
+                        '_', ' ').title()} Over Time by Campaign",
                 )
                 st.plotly_chart(fig_ts_cmp, use_container_width=True)
 
