@@ -116,8 +116,17 @@ def main() -> None:
 
     # Sidebar navigation
     st.sidebar.title("Mail watcher")
+    nav_options = ("Email Editor", "Statistics", "Campaign Metrics")
+    if "selected_page" not in st.session_state:
+        st.session_state["selected_page"] = "Email Editor"
+    if st.session_state["selected_page"] not in nav_options:
+        st.session_state["selected_page"] = "Email Editor"
+
     page = st.sidebar.selectbox(
-        "Navigate", ("Email Editor", "Statistics", "Campaign Metrics")
+        "Navigate",
+        nav_options,
+        index=nav_options.index(st.session_state["selected_page"]),
+        key="selected_page",
     )
 
     if page == "Email Editor":

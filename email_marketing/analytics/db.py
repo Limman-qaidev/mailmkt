@@ -274,8 +274,9 @@ def load_all_data(
 
     # Después de leer signups
     if "signup_ts" in signups.columns:
-        signups["signup_ts"] = pd.to_datetime(signups["signup_ts"],
-                                              errors="coerce")
+        signups["signup_ts"] = pd.to_datetime(
+            signups["signup_ts"], errors="coerce"
+        )
 
     # Si envías el send_ts desde email_map
     if "send_ts" in sends.columns:
@@ -284,5 +285,12 @@ def load_all_data(
     # Si events trae 'ts' (texto), ya sea aquí o en la vista:
     if "ts" in events.columns:
         events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
+
+    # Normalise campaign column across frames
+    group_col = "campaign_id" if "campaign_id" in sends.columns else "campaign"
+    alt = "campaign" if group_col == "campaign_id" else "campaign_id"
+    for df in (events, sends, signups):
+        if group_col not in df.columns and alt in df.columns:
+            df.rename(columns={alt: group_col}, inplace=True)
 
     return events, sends, campaigns, signups
