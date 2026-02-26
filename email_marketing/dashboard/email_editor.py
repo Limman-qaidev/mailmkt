@@ -26,6 +26,7 @@ from typing import Any, List, Optional
 
 import pandas as pd
 import streamlit as st
+import textwrap
 
 from email_marketing.ab_testing import assign_variant
 from email_marketing.analytics.recommend import get_distribution_list
@@ -596,7 +597,7 @@ def render_email_editor() -> None:
                 )
 
                 # Cuerpo: texto → logo → fila de enlaces
-                full_html = f"""<!DOCTYPE html>
+                full_html = textwrap.dedent(f"""<!DOCTYPE html>
                 <html>
                 <head><meta charset="utf-8"></head>
                 <body>
@@ -607,8 +608,7 @@ def render_email_editor() -> None:
                 </div>
                 {links_row}
                 </body>
-                </html>"""
-
+                </html>""")
 
                 try:
                     sender.send_email(
