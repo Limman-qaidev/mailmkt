@@ -299,46 +299,19 @@ def main() -> None:
     if os.environ.get("RUN_TRACKING_WITH_STREAMLIT", "false").lower() in {"1", "true", "yes"}:
         _start_tracking_server()
 
-    # -------- Deferred navigation handling (before building the selectbox) --------
-    # Any sub-page can request a redirect by setting:
-    #   st.session_state["nav_redirect"] = "<Target Page Name>"
-    # or legacy:
-    #   st.session_state["pending_nav"] = "<Target Page Name>"
-    redirect_target = st.session_state.pop("nav_redirect", None) or st.session_state.pop("pending_nav", None)
-
-    pages = (
-        "MO Assistant",
-        "Email Editor",
-        "Statistics",
-        "Campaign Metrics",
-        "Customer 360º",
-    )
-
-    # If a redirect is requested, clear previous widget value so `index` applies
-    default_index = 0
-    if isinstance(redirect_target, str) and redirect_target in pages:
-        default_index = pages.index(redirect_target)
-        if "nav" in st.session_state:
-            del st.session_state["nav"]  # ensure the selectbox respects `index`
-
-    # Sidebar title and page selector
-    _render_sidebar_brand(mini=True)
-    st.sidebar.markdown("### Mail Watcher")
-
-    # Keep current page stable across reruns unless a redirect was requested
-    current_page = st.session_state.get("nav", None)
-    if redirect_target and redirect_target in pages:
-        default_index = pages.index(redirect_target)
-    elif current_page in pages:
-        default_index = pages.index(current_page)
-    else:
-        default_index = 0  # fallback
+    # Sidebar navigation
+    st.sidebar.title("Mail watcher")
+    nav_options = ("Email Editor", "Statistics", "Campaign Metrics")
+    if "selected_page" not in st.session_state:
+        st.session_state["selected_page"] = "Email Editor"
+    if st.session_state["selected_page"] not in nav_options:
+        st.session_state["selected_page"] = "Email Editor"
 
     page = st.sidebar.selectbox(
         "Navigate",
-        pages,
-        index=default_index,
-        key="nav",
+        nav_options,
+        index=nav_options.index(st.session_state["selected_page"]),
+        key="selected_page",
     )
 
 

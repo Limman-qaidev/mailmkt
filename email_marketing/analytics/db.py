@@ -258,15 +258,27 @@ def load_all_data(
     keep_cols = [c for c in ["campaign_id", "campaign", "msg_id", "event_type", "event_ts", "email"] if c in events.columns]
     events = events[keep_cols]
 
-    # signups join campaigns for human-readable campaign name
-    if not campaigns.empty and "campaign_id" in campaigns.columns:
-        signups = signups.merge(campaigns, on="campaign_id", how="left")
-        signups = signups.rename(columns={"name": "campaign"})
+    # Después de leer signups
+    if "signup_ts" in signups.columns:
+        signups["signup_ts"] = pd.to_datetime(
+            signups["signup_ts"], errors="coerce"
+        )
 
     # parse timestamps
     if "signup_ts" in signups.columns:
         signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
     if "send_ts" in sends.columns:
         sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
+
+    # Si events trae 'ts' (texto), ya sea aquí o en la vista:
+    if "ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
+
+    # Normalise campaign column across frames
+    group_col = "campaign_id" if "campaign_id" in sends.columns else "campaign"
+    alt = "campaign" if group_col == "campaign_id" else "campaign_id"
+    for df in (events, sends, signups):
+        if group_col not in df.columns and alt in df.columns:
+            df.rename(columns={alt: group_col}, inplace=True)
 
     return events, sends, campaigns, signups
