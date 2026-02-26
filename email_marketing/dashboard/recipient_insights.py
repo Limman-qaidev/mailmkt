@@ -187,11 +187,10 @@ def _heatmap_df(ev: pd.DataFrame, email: str, event_type: str) -> pd.DataFrame:
     return mat[["weekday", "hour", "count"]]
 
 
-def _request_nav_to_editor(recipients: List[str], subject: str) -> None:
-    """Store recipients/subject and request navigation to Email Editor."""
+def _request_nav_to_editor(recipients: list[str], subject: str) -> None:
     st.session_state["mo_recipients"] = recipients
     st.session_state["mo_subject_live"] = subject
-    # Use a deferred routing flag; app.py should consume this **before** building the sidebar.
+    st.session_state.pop("nav", None)
     st.session_state["pending_nav"] = "Email Editor"
     st.rerun()
 

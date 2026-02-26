@@ -565,10 +565,9 @@ def render_email_editor() -> None:
             for i, email in enumerate(final_recipients, start=1):
                 variant = assign_variant(email)
                 msg_id = uuid.uuid4().hex
-
                 timestamp = int(time.time())
 
-                # QS de recursos
+                # Query strings
                 logo_qs = urllib.parse.urlencode(
                     {"msg_id": msg_id, "ts": timestamp, "campaign": subject_value}
                 )
@@ -578,33 +577,24 @@ def render_email_editor() -> None:
                 unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
                 comp_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
 
-                # Barra de enlaces horizontal bajo el logo (tabla = máxima compatibilidad)
                 links_row = (
-                    f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-                    f'style="margin-top:8px;">'
+                    f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">'
                     f'<tr>'
-                    f'<td style="padding-right:16px;">'
-                    f'<a href="{tracking_url}/click?{click_qs}">Click here</a>'
-                    f'</td>'
-                    f'<td style="padding-right:16px;">'
-                    f'<a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a>'
-                    f'</td>'
-                    f'<td>'
-                    f'<a href="{tracking_url}/complaint?{comp_qs}">Report spam</a>'
-                    f'</td>'
+                    f'<td style="padding-right:16px;"><a href="{tracking_url}/click?{click_qs}">Click here</a></td>'
+                    f'<td style="padding-right:16px;"><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a></td>'
+                    f'<td><a href="{tracking_url}/complaint?{comp_qs}">Report spam</a></td>'
                     f'</tr>'
                     f'</table>'
                 )
 
-                # Cuerpo: texto → logo → fila de enlaces
-                full_html = textwrap.dedent(f"""<!DOCTYPE html>
+                full_html = textwrap.dedent(f"""\
+                <!DOCTYPE html>
                 <html>
                 <head><meta charset="utf-8"></head>
                 <body>
                 <div>{html_body}</div>
                 <div style="margin:12px 0 4px 0;">
-                    <img src="{tracking_url}/logo?{logo_qs}"
-                        alt="Company Logo" width="200" style="display:block;"/>
+                <img src="{tracking_url}/logo?{logo_qs}" alt="Company Logo" width="200" style="display:block;"/>
                 </div>
                 {links_row}
                 </body>

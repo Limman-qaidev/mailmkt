@@ -437,6 +437,9 @@ def _prefill_and_jump(
     st.session_state["mo_recipients"] = emails
     st.session_state["mo_subject"] = (subject_to_use or "").strip()
     st.session_state["mo_topic"] = topic
+    # Elimina la clave nav para evitar modificar un widget ya creado
+    st.session_state.pop("nav", None)
+    # Establece la redirección
     st.session_state["nav_redirect"] = "Email Editor"
     st.rerun()
 
