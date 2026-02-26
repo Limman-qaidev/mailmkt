@@ -1,0 +1,22 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO assistant (warning)">
+  <style>
+    :root { --brand:#002147; --accent-yellow:#FFD100; --text:#0F172A; }
+  </style>
+  <ellipse cx="64" cy="112" rx="28" ry="6" fill="rgba(0,0,0,0.08)"></ellipse>
+  <rect x="44" y="78" width="40" height="26" rx="8" fill="var(--brand)"></rect>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="var(--brand)"></rect>
+  <rect x="36" y="32" width="56" height="40" rx="12" fill="#FFFFFF"></rect>
+  <circle cx="56" cy="52" r="4" fill="var(--text)"></circle>
+  <circle cx="72" cy="52" r="4" fill="var(--text)"></circle>
+  <path d="M52 60 Q64 60 76 60" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round"></path>
+  <line x1="92" y1="20" x2="92" y2="28" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="92" cy="18" r="5" fill="var(--accent-yellow)"></circle>
+  <!-- Warning badge -->
+  <g transform="translate(96,36)">
+    <polygon points="0,-10 10,8 -10,8" fill="#F59E0B"></polygon>
+    <rect x="-1.5" y="-5" width="3" height="7" fill="#FFFFFF" rx="1"></rect>
+    <rect x="-1.5" y="4.5" width="3" height="3" fill="#FFFFFF" rx="1"></rect>
+  </g>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="none" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2"></rect>
+</svg>

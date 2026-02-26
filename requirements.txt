@@ -17,6 +17,9 @@ pandas>=2.0
 numpy>=1.23
 scipy>=1.11
 scikit-learn>=1.3
+sqlalchemy
+psycopg2-binary
+
 
 # Development dependencies
 pytest>=7.4

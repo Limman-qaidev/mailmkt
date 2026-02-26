@@ -1,47 +1,49 @@
 """Email editor component for the Streamlit dashboard.
 
 This module defines a Streamlit view that lets users upload a recipient
-list, compose an HTML message and trigger the sending of a campaign via
-either SMTP or Mailgun.  Recipient lists can be provided in CSV or Excel
-format and are displayed back to the user for verification.
+list, compose an HTML message, and trigger the sending of a campaign via
+SMTP (or Mailgun if later enabled). Recipient lists can be provided in CSV
+or Excel format and are displayed back to the user for verification.
+
+MO integration:
+- If MO Assistant preloaded a list/subject, a third source mode
+  "From MO Assistant (preloaded)" becomes available automatically.
+- During sending, session flags are set so the sidebar avatar switches to
+  the "writing" animation (mo_bot_writing.svg).
 """
 
 from __future__ import annotations
 
 import os
-import urllib.parse
 import time
-from pathlib import Path
-from datetime import datetime
-import sqlite3
-
+import urllib.parse
 import uuid
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Optional
 
 import pandas as pd
 import streamlit as st
 
 from email_marketing.ab_testing import assign_variant
-# from email_marketing.analytics import calibration
-# from email_marketing.analytics import model as analytics_model
 from email_marketing.analytics.recommend import get_distribution_list
-
-# Uncomment if needed add MailgunSender
 # from email_marketing.mailer.mailgun_sender import MailgunSender
 from email_marketing.mailer.smtp_sender import SMTPSender
 
 
+# ============================ Utilities ============================
+
 def _now_ts() -> str:
-    # Espacio entre fecha y hora; optional microseconds
+    """UTC timestamp as 'YYYY-mm-dd HH:MM:SS.ffffff' (no 'T')."""
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 def _load_recipients(upload: Optional[Any]) -> List[str]:
-    """
-    Load recipient addresses from an uploaded file.
+    """Load recipient addresses from an uploaded CSV/Excel (first column).
 
-    Supports CSV and Excel formats.  Assumes the first column contains email
-    addresses.  Non‑email values are ignored.  Returns a list of strings.
+    Non-email values are ignored. Returns a list of strings.
     """
     if upload is None:
         return []
@@ -62,7 +64,7 @@ def _load_recipients(upload: Optional[Any]) -> List[str]:
 
 
 def _db_paths_for_send() -> tuple[str, str]:
-    """Devuelve rutas de email_events.db y email_map.db (carpeta /data)."""
+    """Return paths to email_events.db and email_map.db under /data."""
     base_dir = Path(__file__).resolve().parents[1]
     data_dir = base_dir / "data"
     events_db = str(data_dir / "email_events.db")
@@ -70,48 +72,44 @@ def _db_paths_for_send() -> tuple[str, str]:
     return events_db, email_map_db
 
 
-def _upsert_email_map(email_map_db: str, msg_id: str, recipient: str,
-                      variant: str | None, ts_str: str) -> None:
-    """
-    Inserta/actualiza fila en email_map.
-    Detecta columnas existentes para ser compatible con tu esquema
-    (con o sin send_ts, con o sin campaign_id).
-    """
+def _upsert_email_map(
+    email_map_db: str,
+    msg_id: str,
+    recipient: str,
+    variant: str | None,
+    ts_str: str,
+) -> None:
+    """Insert/replace row in email_map with backward-compatible schema."""
     with sqlite3.connect(email_map_db) as conn:
-        cols = [r[1].lower() for r in conn.execute(
-            "PRAGMA table_info(email_map)"
-            ).fetchall()]
+        cols = [r[1].lower() for r in conn.execute("PRAGMA table_info(email_map)").fetchall()]
         has_send_ts = "send_ts" in cols
 
         if has_send_ts:
             conn.execute(
-                "INSERT OR REPLACE INTO email_map "
-                "(msg_id, recipient, variant, send_ts) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant, send_ts) "
+                "VALUES (?, ?, ?, ?)",
                 (msg_id, recipient, variant, ts_str),
             )
         else:
-            # Esquema antiguo sin send_ts
             conn.execute(
-                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant)"
-                " VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO email_map (msg_id, recipient, variant) "
+                "VALUES (?, ?, ?)",
                 (msg_id, recipient, variant),
             )
         conn.commit()
 
 
-def _log_send_event(events_db: str, msg_id: str, campaign: str,
-                    client_ip: str = "0.0.0.0", ts_str: str | None = None
-                    ) -> None:
-    """
-    Inserta el evento 'send' en la tabla events.
-    Usa formato de timestamp 'YYYY-mm-dd HH:MM:SS.SSSSSS' (sin 'T') para
-      evitar el error de pandas/sqlite.
-    """
+def _log_send_event(
+    events_db: str,
+    msg_id: str,
+    campaign: str,
+    client_ip: str = "0.0.0.0",
+    ts_str: str | None = None,
+) -> None:
+    """Insert a 'send' event into events table (schema-compatible)."""
     if ts_str is None:
         ts_str = _now_ts()
-
     with sqlite3.connect(events_db) as conn:
-        # id es autoincrement, por eso nominamos columnas
         conn.execute(
             """
             INSERT INTO events (msg_id, event_type, client_ip, ts, campaign)
@@ -122,225 +120,512 @@ def _log_send_event(events_db: str, msg_id: str, campaign: str,
         conn.commit()
 
 
+# ================== MO: sending flags for sidebar avatar ==================
+
+def _mo_set_sending_flags(value: bool) -> None:
+    """Set/clear sending flags so the sidebar avatar switches to 'writing'."""
+    for key in ("email_sending", "campaign_sending", "sending"):
+        st.session_state[key] = bool(value)
+
+
+@contextmanager
+def mo_sending_state() -> None:
+    """Context manager to toggle sending flags during the send window."""
+    _mo_set_sending_flags(True)
+    try:
+        yield
+    finally:
+        _mo_set_sending_flags(False)
+
+
+# ============================ Main view ============================
+def _normalize_email(email: str) -> str:
+    """Lowercase/trim and validate a minimal email shape."""
+    s = str(email).strip().lower()
+    if "@" in s and "." in s.split("@")[-1]:
+        return s
+    return ""
+
+
+def _render_recipient_manager(base_emails: List[str]) -> List[str]:
+    """Search and exclude recipients interactively. Returns the final list to send."""
+    st.subheader("Manage recipients")
+
+    # Normalize base list (deduplicate)
+    base_norm = []
+    seen = set()
+    for e in base_emails:
+        ne = _normalize_email(e)
+        if ne and ne not in seen:
+            seen.add(ne)
+            base_norm.append(ne)
+
+    # Session exclusions (persist across reruns/pages)
+    excl_key = "recipient_exclusions"
+    exclusions: set[str] = set(st.session_state.get(excl_key, []))
+
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        query = st.text_input(
+            "Search/filter recipients",
+            placeholder="e.g. jane@, @example.com, 'mortgage'",
+            help="Type a substring or @domain to filter the preview below.",
+            key="recip_search",
+        ).strip().lower()
+
+    with col2:
+        st.metric("Total in list", f"{len(base_norm):,}")
+    with col3:
+        st.metric("Excluded", f"{len(exclusions):,}")
+
+    # Filter for preview
+    if query:
+        if query.startswith("@"):
+            dom = query[1:]
+            filtered = [e for e in base_norm if e.endswith("@" + dom) or e.split("@")[-1] == dom]
+        else:
+            filtered = [e for e in base_norm if query in e]
+    else:
+        filtered = base_norm
+
+    # Multiselect (capped for performance)
+    cap = 1500
+    options = filtered[:cap]
+    selected = st.multiselect(
+        f"Select emails to exclude (showing up to {cap:,} matches)",
+        options=options,
+        default=[],
+        key="recip_multiexclude",
+    )
+
+    cA, cB, cC = st.columns([1, 1, 2])
+    with cA:
+        if st.button("Add to exclusions"):
+            exclusions.update(_normalize_email(e) for e in selected)
+            st.session_state[excl_key] = sorted(exclusions)
+            st.success(f"Added {len(selected)} to exclusions.")
+    with cB:
+        if st.button("Clear exclusions", help="Remove all manual exclusions."):
+            exclusions.clear()
+            st.session_state[excl_key] = []
+            st.info("Exclusions cleared.")
+
+    # Manual exclude box
+    manual = st.text_area(
+        "Manual exclusions (comma/space/newline separated)",
+        placeholder="paste or type emails here…",
+        height=80,
+        key="recip_manual_excl",
+    )
+    if st.button("Exclude listed emails"):
+        added = 0
+        for raw in re.split(r"[,\s]+", manual):
+            ne = _normalize_email(raw)
+            if ne:
+                if ne not in exclusions:
+                    added += 1
+                exclusions.add(ne)
+        st.session_state[excl_key] = sorted(exclusions)
+        st.success(f"Added {added} email(s) to exclusions.")
+
+    # Preview table (filtered view) and exclusions summary
+    with st.expander("Preview (filtered)"):
+        st.dataframe(pd.DataFrame({"email": options}))
+    if exclusions:
+        chips = ", ".join(list(sorted(exclusions))[:10])
+        more = max(0, len(exclusions) - 10)
+        st.caption(f"Excluded (first 10): {chips}" + (f"  ·  +{more} more" if more else ""))
+
+    # Final list to send = base - exclusions
+    final_emails = [e for e in base_norm if e not in exclusions]
+    st.success(f"Final recipients to send: {len(final_emails):,}")
+    return final_emails
+
+
 def render_email_editor() -> None:
-    """Render the email editor page in Streamlit."""
+    """Render the email editor page (stable across reruns) with recipient manager."""
+    import re  # for manual exclusions parsing
+
     st.header("Email Campaign Editor")
 
+    # ---------- Persistent session state ----------
+    if "recipient_base" not in st.session_state:
+        st.session_state["recipient_base"] = []        # working list (persistent)
+    if "recipient_exclusions" not in st.session_state:
+        st.session_state["recipient_exclusions"] = []  # exclusions (persistent)
     if "preview_list" not in st.session_state:
-        st.session_state["preview_list"] = []
+        st.session_state["preview_list"] = []          # preview from recommender
+    if "editor_subject" not in st.session_state:
+        st.session_state["editor_subject"] = ""        # sticky subject
 
-    # 1) Upload recipient list
-    mode = st.radio("Recipient source", ["Upload list", "By campaign type"])
-    recipients: List[str] = []
-    if mode == "Upload list":
+    # ---------- Prefill from MO (consume once) ----------
+    incoming_mo = st.session_state.pop("mo_recipients", None)
+    mo_subject_live = st.session_state.pop(
+        "mo_subject_live", st.session_state.pop("mo_subject", "")
+    )
+    mo_topic = st.session_state.pop("mo_topic", "")
+
+    # If MO provided recipients in this run, set them as the working base
+    if incoming_mo:
+        base = [str(e).strip().lower() for e in incoming_mo if "@" in str(e)]
+        base = [e for e in base if "." in e.split("@")[-1]]  # minimal validation
+        # deduplicate preserving order
+        dedup: list[str] = []
+        seen = set()
+        for e in base:
+            if e not in seen:
+                seen.add(e)
+                dedup.append(e)
+        st.session_state["recipient_base"] = dedup
+        if mo_subject_live and not st.session_state["editor_subject"]:
+            st.session_state["editor_subject"] = mo_subject_live
+
+    # ---------- Modes (load/replace the working base) ----------
+    has_mo = bool(incoming_mo or st.session_state.get("recipient_base"))
+    modes = ["Upload list"]
+    if has_mo:
+        modes.insert(0, "From MO Assistant (preloaded)")
+    mode = st.radio("Recipient source", modes, index=0 if has_mo else 0)
+
+    def _normalize_email(email: str) -> str:
+        s = str(email).strip().lower()
+        return s if ("@" in s and "." in s.split("@")[-1]) else ""
+
+    def _show_preview_table(emails: list[str], label: str) -> None:
+        st.caption(label)
+        st.dataframe(pd.DataFrame({"email": emails}))
+
+    # ---- Mode: From MO (base ya cargada si venía esta ejecución) ----
+    if mode == "From MO Assistant (preloaded)":
+        base_now = st.session_state["recipient_base"]
+        st.success(
+            f"MO preloaded {len(base_now)} recipients"
+            f"{(' for topic: ' + mo_topic) if mo_topic else ''}."
+        )
+        if base_now:
+            doms = sorted({e.split("@")[-1] for e in base_now})
+            dom_sel = st.multiselect(
+                "Filter by domain (visual preview only)", doms, key="mo_domain_filter"
+            )
+            view = [e for e in base_now if not dom_sel or e.split("@")[-1] in dom_sel]
+            _show_preview_table(view, "Preview of current working list")
+        st.markdown("---")
+
+    # ---- Mode: Upload list (reemplaza base cuando hay fichero) ----
+    elif mode == "Upload list":
         upload = st.file_uploader(
             "Upload recipient list (CSV or Excel)",
             type=["csv", "xls", "xlsx"],
         )
-        recipients = _load_recipients(upload)
-        if recipients:
-            st.success(f"Loaded {len(recipients)} recipients.")
-            st.dataframe(pd.DataFrame({"email": recipients}))
+        if upload is not None:
+            up = _load_recipients(upload)
+            up_norm = []
+            seen = set()
+            for e in up:
+                ne = _normalize_email(e)
+                if ne and ne not in seen:
+                    seen.add(ne)
+                    up_norm.append(ne)
+            st.session_state["recipient_base"] = up_norm
+            st.success(f"Loaded {len(up_norm)} recipients into the working list.")
+            _show_preview_table(up_norm, "Preview of current working list")
+        st.markdown("---")
+
+    # ---- Mode: Recommender (preview → Apply to working base) ----
     else:
         campaign_id = st.text_input(
             "Campaign ID",
-            help="Identifier of the campaign used to "
-            "build the campaign list.",
+            help="Identifier of the campaign used to build the recommended list.",
         )
-        """threshold = st.slider(
-            "Recommendation threshold",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.5,
-            step=0.05,
-            help=(
-                "Minimum probability required to include a recipient in the "
-                "recommended list."
-                ),
-        )"""
-        if st.button("Preview") and campaign_id:
-            try:
-                recipients = get_distribution_list(campaign_id, 1.0)
-                st.success(
-                    f"Loaded {len(recipients)} recommended recipients."
-                )
-                if recipients:
-                    st.dataframe(pd.DataFrame({"email": recipients}))
-            except Exception as exc:
-                st.error(f"Recommendation failed: {exc}")
+        colp, cola = st.columns([1, 1])
+        preview_clicked = colp.button("Preview")
+        apply_clicked = cola.button("Use preview as working list")
+
+        if preview_clicked:
+            if not campaign_id:
+                st.warning("Please provide a Campaign ID.")
+            else:
+                try:
+                    recs = list(get_distribution_list(campaign_id, 1.0))
+                    rec_norm = []
+                    seen = set()
+                    for e in recs:
+                        ne = _normalize_email(e)
+                        if ne and ne not in seen:
+                            seen.add(ne)
+                            rec_norm.append(ne)
+                    st.session_state["preview_list"] = rec_norm
+                    st.success(f"Loaded {len(rec_norm)} recommended recipients (preview).")
+                except Exception as exc:
+                    st.error(f"Recommendation failed: {exc}")
 
         if st.session_state["preview_list"]:
-            domains = sorted({
-                email.split("@")[-1] for email in st.session_state[
-                    "preview_list"
-                    ]
-                })
-            selected = st.multiselect("Filter by domain", domains)
-            recipients = [
+            doms = sorted({e.split("@")[-1] for e in st.session_state["preview_list"]})
+            dom_sel = st.multiselect(
+                "Filter preview by domain",
+                doms,
+                key="rec_domain_filter",
+            )
+            filtered = [
                 e
                 for e in st.session_state["preview_list"]
-                if not selected or e.split("@")[-1] in selected
+                if not dom_sel or e.split("@")[-1] in dom_sel
             ]
-            st.success(f"Loaded {len(recipients)} recommended recipients.")
-            if recipients:
-                st.dataframe(pd.DataFrame({"email": recipients}))
+            _show_preview_table(filtered, "Preview (recommender)")
+            if apply_clicked:
+                st.session_state["recipient_base"] = filtered
+                st.success(f"Applied {len(filtered)} recipients to the working list.")
+        st.markdown("---")
 
-    # 2) Compose subject and HTML body
-    subject = st.text_input("Subject", max_chars=200)
+    # ================== Manage recipients (tabs; non-destructive) ==================
+    base_norm: list[str] = list(st.session_state["recipient_base"])
+    if not base_norm:
+        st.info("Load or generate a recipient list to manage and send.")
+        return
+
+    st.subheader("Manage recipients")
+
+    exclusions: set[str] = set(st.session_state.get("recipient_exclusions", []))
+
+    # Métricas superiores
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.caption("Manage who will receive this campaign.")
+    with col2:
+        st.metric("Total in working list", f"{len(base_norm):,}")
+    with col3:
+        st.metric("Excluded", f"{len(exclusions):,}")
+
+    # Tabs: selección individual y (opcional) exclusión manual
+    tab_select, tab_manual = st.tabs(["Select individually", "Manual exclusions"])
+
+    with tab_select:
+        query = st.text_input(
+            "Search/filter (visual)",
+            placeholder="e.g. jane@, @example.com, 'mortgage'",
+            help="Type a substring or @domain to narrow the list below, then select and exclude.",
+            key="recip_search",
+        ).strip().lower()
+
+        # Vista filtrada (no altera la base)
+        if query:
+            if query.startswith("@"):
+                dom = query[1:]
+                filtered = [
+                    e for e in base_norm
+                    if e.endswith("@" + dom) or e.split("@")[-1] == dom
+                ]
+            else:
+                filtered = [e for e in base_norm if query in e]
+        else:
+            filtered = base_norm
+
+        cap = 2000
+        options = filtered[:cap]
+        selected = st.multiselect(
+            f"Select emails to exclude (showing up to {cap:,} matches)",
+            options=options,
+            default=[],
+            key="recip_multiexclude",
+        )
+
+        cA, cB, cC = st.columns([1, 1, 1])
+        with cA:
+            if st.button("Add selected to exclusions"):
+                added = 0
+                for e in selected:
+                    if e not in exclusions:
+                        exclusions.add(e)
+                        added += 1
+                st.session_state["recipient_exclusions"] = sorted(exclusions)
+                st.success(f"Added {added} email(s) to exclusions.")
+        with cB:
+            if query.startswith("@") and st.button("Exclude this domain"):
+                dom = query[1:]
+                added = 0
+                for e in base_norm:
+                    if e.endswith("@" + dom) or e.split("@")[-1] == dom:
+                        if e not in exclusions:
+                            exclusions.add(e)
+                            added += 1
+                st.session_state["recipient_exclusions"] = sorted(exclusions)
+                st.success(f"Excluded domain @{dom} ({added} addresses).")
+        with cC:
+            if st.button("Clear exclusions"):
+                exclusions.clear()
+                st.session_state["recipient_exclusions"] = []
+                st.info("Exclusions cleared.")
+
+    with tab_manual:
+        manual = st.text_area(
+            "Manual exclusions (comma/space/newline separated)",
+            placeholder="paste or type emails here…",
+            height=100,
+            key="recip_manual_excl",
+        )
+        if st.button("Exclude listed emails"):
+            added = 0
+            for raw in re.split(r"[,\s]+", manual):
+                ne = raw.strip().lower()
+                if "@" in ne and "." in ne.split("@")[-1]:
+                    if ne not in exclusions:
+                        exclusions.add(ne)
+                        added += 1
+            st.session_state["recipient_exclusions"] = sorted(exclusions)
+            st.success(f"Added {added} email(s) to exclusions.")
+
+    # ---------- Final list (base − exclusions) ----------
+    final_recipients: list[str] = [e for e in base_norm if e not in exclusions]
+    st.success(f"Final recipients to send: {len(final_recipients):,}")
+
+    # Side-by-side preview: Final vs Excluded
+    col_left, col_right = st.columns(2)
+    with col_left:
+        with st.expander("Final recipients (after exclusions)", expanded=False):
+            # Cap visual para rendimiento
+            df_final = pd.DataFrame({"email": final_recipients[:3000]})
+            st.dataframe(df_final, use_container_width=True)
+    with col_right:
+        with st.expander("Excluded recipients (audit)", expanded=False):
+            excl_sorted = sorted(exclusions)
+            df_excl = pd.DataFrame({"email": excl_sorted[:3000]})
+            st.dataframe(df_excl, use_container_width=True)
+
+            # NEW: select excluded emails to re-include (undo exclusion)
+            to_include = st.multiselect(
+                "Select emails to re-include",
+                options=excl_sorted[:3000],
+                default=[],
+                key="recip_multiinclude",
+                help="Pick excluded addresses to add back to the final recipients."
+            )
+            c_inc1, c_inc2 = st.columns([1, 1])
+            with c_inc1:
+                if st.button("Re-include selected", key="btn_reinclude"):
+                    # Remove chosen emails from the exclusions set
+                    before = len(exclusions)
+                    exclusions.difference_update(to_include)
+                    st.session_state["recipient_exclusions"] = sorted(exclusions)
+                    st.success(f"Re-included {before - len(exclusions)} address(es).")
+            with c_inc2:
+                if st.button("Clear exclusions", key="btn_clear_all_excl"):
+                    exclusions.clear()
+                    st.session_state["recipient_exclusions"] = []
+                    st.info("Exclusions cleared.")
+
+
+    st.markdown("---")
+
+    # ================== Compose & Send ==================
+    default_subject = st.session_state["editor_subject"] or mo_subject_live or ""
+    subject_value = st.text_input(
+        "Subject", max_chars=200, value=default_subject, key="subject_input"
+    )
+    st.session_state["editor_subject"] = subject_value  # sticky
+
     html_body = st.text_area(
         "HTML Body",
         height=300,
         placeholder="<p>Hello {{ name }}, welcome to our newsletter.</p>",
+        key="html_body",
     )
 
-    # 3) Choose sender and analytics actions
-    # Uncomment if needed adding MailgunSender
-    # sender_choice = st.selectbox("Sender", ["SMTP", "Mailgun"])
-    """st.sidebar.subheader("Analytics")
-    if st.sidebar.button("Recalculate weights"):
-        calibration.recalculate_weights()
-        st.sidebar.success("Weights recalibrated")
-    if st.sidebar.button("Retrain model"):
-        analytics_model.train_model()
-        st.sidebar.success("Model trained")"""
+    can_send = bool(final_recipients) and bool(subject_value) and bool(html_body)
     send_button = st.button(
-        "Send Email", disabled=not recipients or not html_body
-        )
+        "Send Email", type="primary", disabled=not can_send, key="mo_send_button"
+    )
+
     if not send_button:
         return
 
-    # 4) Instantiate the chosen sender
-    # Uncomment if needed add MailgunSender
+    # ---------- Send ----------
     sender = SMTPSender()
-    """if sender_choice == "SMTP":
-        sender = SMTPSender()
-    else:
-        try:
-            sender = MailgunSender()
-        except Exception as exc:
-            st.error(f"Error initializing Mailgun sender: {exc}")
-            return"""
+    tracking_url = os.environ.get(
+        "TRACKING_URL", "https://track.jonathansalgadonieto.com"
+    ).strip()
 
-    # 5) Determine tracking URL
-    # Override tracking URL manually in the UI if needed
-    default_tracking_url = os.environ.get(
-        "TRACKING_URL",
-        "https://track.jonathansalgadonieto.com"
-        )
-    # tracking_url = st.text_input(
-    #     "Tracking URL",
-    #     value=default_tracking_url,
-    #     help="URL pública de tu servidor de tracking"
-    # ).strip()
-    tracking_url = default_tracking_url
-    # 6) Debug: show the exact URLs that will be embedded
-    # sample_id = uuid.uuid4().hex
-    # pixel_debug = f"{tracking_url}/pixel?msg_id={sample_id}"
-    # click_debug = f"{tracking_url}/click?{urllib.parse.urlencode(
-    # {'msg_id': sample_id, 'url': 'https://example.com'})}"
-    # unsub_debug = f"{tracking_url}/unsubscribe?msg_id={sample_id}"
-    # complaint_debug = f"{tracking_url}/complaint?msg_id={sample_id}"
-
-    """st.markdown("### 🔍 Debug: Embedded Tracking URLs")
-    st.write("**Pixel URL:**", pixel_debug)
-    st.write("**Click URL:**", click_debug)
-    st.write("**Unsubscribe URL:**", unsub_debug)
-    st.write("**Complaint URL:**", complaint_debug)"""
-    st.markdown("---")
-
-    # 7) Send emails with progress bar
-    total = len(recipients)
+    total = len(final_recipients)
     progress = st.progress(0.0)
-
     events_db_path, email_map_db_path = _db_paths_for_send()
 
-    for i, email in enumerate(recipients, start=1):
-        # Assign variant and generate msg_id
-        variant = assign_variant(email)
-        msg_id = uuid.uuid4().hex
+    # Optional: MO animation during send, if available
+    try:
+        ctx = mo_sending_state()  # type: ignore[name-defined]
+    except Exception:
+        ctx = None
+    if ctx:
+        cm = ctx
+    else:
+        from contextlib import nullcontext
+        cm = nullcontext()
 
-        # a) Build open-pixel tag
-        timestamp = int(time.time())
-        # pixel_tag = (
-        #    f'<img src="{tracking_url}/pixel?msg_id={msg_id}&ts={timestamp}" '
-        #    'width="1" height="1" alt="" border="0" '
-        #    'style="display:block; visibility:hidden;"/>'
-        # )
-        logo_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id,
-             "ts": timestamp,
-             "campaign": subject}
-             )
-        logo_tag = (
-            f'<p><img src="{tracking_url}/logo?{logo_qs}" '
-            'alt="Company Logo" width="200"/></p>'
-        )
+    with cm:
+        with st.spinner("Sending emails..."):
+            for i, email in enumerate(final_recipients, start=1):
+                variant = assign_variant(email)
+                msg_id = uuid.uuid4().hex
 
-        # b) Build click link
-        click_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id, "url": "https://example.com",
-             "campaign": subject}
-            )
-        click_tag = (
-            f'<p><a href="{tracking_url}/click?{click_qs}">Click here</a></p>'
-        )
+                timestamp = int(time.time())
 
-        # c) Build unsubscribe link
-        unsub_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id,
-             "campaign": subject}
-             )
-        unsub_tag = (
-            f'<p><a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe'
-            '</a></p>'
-        )
+                # QS de recursos
+                logo_qs = urllib.parse.urlencode(
+                    {"msg_id": msg_id, "ts": timestamp, "campaign": subject_value}
+                )
+                click_qs = urllib.parse.urlencode(
+                    {"msg_id": msg_id, "url": "https://example.com", "campaign": subject_value}
+                )
+                unsub_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
+                comp_qs = urllib.parse.urlencode({"msg_id": msg_id, "campaign": subject_value})
 
-        # d) Build complaint link
-        comp_qs = urllib.parse.urlencode(
-            {"msg_id": msg_id,
-             "campaign": subject}
-             )
-        complaint_tag = (
-            f'<p><a href="{tracking_url}/complaint?{comp_qs}">Report spam'
-            '</a></p>'
-        )
-        # e) Assemble full HTML
-        full_html = f"""<!DOCTYPE html>
-                    <html>
-                    <head><meta charset="utf-8"></head>
-                    <body>
-                        {logo_tag}
-                        {html_body}
-                        {click_tag}
-                        {unsub_tag}
-                        {complaint_tag}
-                    </body>
-                    </html>
-                    """
-        # >>> PREVIEW: solo para i==1, muestro el HTML que voy a enviar <<<
-        # if i == 1:
-        #     st.subheader("📧 HTML Preview (first recipient)")
-        #     st.code(full_html, language="html")
-        #     st.markdown("---")
-        # f) Send the email
-        try:
-            sender.send_email(
-                recipient=email,
-                msg_id=msg_id,
-                html=full_html,
-                subject=subject,
-                variant=variant,
-            )
-            ts_str = _now_ts()
-            _log_send_event(events_db_path, msg_id, subject, "0.0.0.0", ts_str)
-            _upsert_email_map(
-                email_map_db_path, msg_id, email, variant, ts_str
+                # Barra de enlaces horizontal bajo el logo (tabla = máxima compatibilidad)
+                links_row = (
+                    f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+                    f'style="margin-top:8px;">'
+                    f'<tr>'
+                    f'<td style="padding-right:16px;">'
+                    f'<a href="{tracking_url}/click?{click_qs}">Click here</a>'
+                    f'</td>'
+                    f'<td style="padding-right:16px;">'
+                    f'<a href="{tracking_url}/unsubscribe?{unsub_qs}">Unsubscribe</a>'
+                    f'</td>'
+                    f'<td>'
+                    f'<a href="{tracking_url}/complaint?{comp_qs}">Report spam</a>'
+                    f'</td>'
+                    f'</tr>'
+                    f'</table>'
                 )
 
-        except Exception as exc:
-            st.error(f"Failed to send to {email}: {exc}")
+                # Cuerpo: texto → logo → fila de enlaces
+                full_html = f"""<!DOCTYPE html>
+                <html>
+                <head><meta charset="utf-8"></head>
+                <body>
+                <div>{html_body}</div>
+                <div style="margin:12px 0 4px 0;">
+                    <img src="{tracking_url}/logo?{logo_qs}"
+                        alt="Company Logo" width="200" style="display:block;"/>
+                </div>
+                {links_row}
+                </body>
+                </html>"""
 
-        # g) Update progress
-        progress.progress(i / total)
 
+                try:
+                    sender.send_email(
+                        recipient=email,
+                        msg_id=msg_id,
+                        html=full_html,
+                        subject=subject_value,
+                        variant=variant,
+                    )
+                    ts_str = _now_ts()
+                    _log_send_event(events_db_path, msg_id, subject_value, "0.0.0.0", ts_str)
+                    _upsert_email_map(email_map_db_path, msg_id, email, variant, ts_str)
+                except Exception as exc:
+                    st.error(f"Failed to send to {email}: {exc}")
+
+                progress.progress(i / total)
+
+    if hasattr(st, "toast"):
+        st.toast(f"Campaign sent to {total} recipients.")
     st.success("Campaign sent.")

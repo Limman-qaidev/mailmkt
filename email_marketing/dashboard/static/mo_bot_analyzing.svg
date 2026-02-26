@@ -1,0 +1,37 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO assistant analyzing">
+  <style>
+    :root { --brand:#002147; --accent-yellow:#FFD100; --text:#0F172A; }
+    @keyframes scan {
+      0% { transform: translateY(-16px); opacity:.12; }
+      50% { opacity:.25; }
+      100% { transform: translateY(16px); opacity:.12; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .anim { animation: none !important; }
+    }
+  </style>
+
+  <ellipse cx="64" cy="112" rx="28" ry="6" fill="rgba(0,0,0,0.08)"></ellipse>
+
+  <rect x="44" y="78" width="40" height="26" rx="8" fill="var(--brand)"></rect>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="var(--brand)"></rect>
+  <rect x="36" y="32" width="56" height="40" rx="12" fill="#FFFFFF"></rect>
+
+  <!-- Eyes -->
+  <circle cx="56" cy="52" r="4.4" fill="var(--text)"></circle>
+  <circle cx="72" cy="52" r="4.4" fill="var(--text)"></circle>
+  <!-- Mouth -->
+  <path d="M52 60 Q64 66 76 60" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round"></path>
+
+  <!-- Scanner line -->
+  <g transform="translate(36,32)">
+    <rect x="0" y="0" width="56" height="40" rx="12" fill="none"></rect>
+    <rect class="anim" x="2" y="12" width="52" height="4" rx="2" fill="#60A5FA" style="animation: scan 2.8s ease-in-out infinite; transform-origin: 28px 12px;"></rect>
+  </g>
+
+  <!-- Antenna -->
+  <line x1="92" y1="20" x2="92" y2="28" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="92" cy="18" r="5" fill="var(--accent-yellow)"></circle>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="none" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2"></rect>
+</svg>

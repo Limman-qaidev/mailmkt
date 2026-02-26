@@ -1,0 +1,36 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO assistant metrics">
+  <style>
+    :root { --brand:#002147; --accent-yellow:#FFD100; --ok:#10B981; --text:#0F172A; }
+    @keyframes grow1 { 0%,100% { height:10px; y:26px; } 50% { height:24px; y:12px; } }
+    @keyframes grow2 { 0%,100% { height:18px; y:18px; } 50% { height:30px; y:6px; } }
+    @keyframes grow3 { 0%,100% { height:26px; y:10px; } 50% { height:36px; y:0px; } }
+    @media (prefers-reduced-motion: reduce) {
+      .anim { animation: none !important; }
+    }
+  </style>
+
+  <ellipse cx="64" cy="112" rx="28" ry="6" fill="rgba(0,0,0,0.08)"></ellipse>
+
+  <rect x="44" y="78" width="40" height="26" rx="8" fill="var(--brand)"></rect>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="var(--brand)"></rect>
+  <rect x="36" y="32" width="56" height="40" rx="12" fill="#FFFFFF"></rect>
+
+  <!-- Eyes -->
+  <circle cx="56" cy="52" r="4.4" fill="var(--text)"></circle>
+  <circle cx="72" cy="52" r="4.4" fill="var(--text)"></circle>
+  <!-- Mouth -->
+  <path d="M52 60 Q64 66 76 60" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round"></path>
+
+  <!-- Bars on the right side -->
+  <g transform="translate(84,36)">
+    <rect x="0.5" y="26" width="6" height="10" fill="#60A5FA" class="anim" style="animation: grow1 2.2s ease-in-out infinite;"></rect>
+    <rect x="9.5" y="18" width="6" height="18" fill="#93C5FD" class="anim" style="animation: grow2 2.2s ease-in-out .15s infinite;"></rect>
+    <rect x="18.5" y="10" width="6" height="26" fill="#1D4ED8" class="anim" style="animation: grow3 2.2s ease-in-out .3s infinite;"></rect>
+  </g>
+
+  <!-- Antenna -->
+  <line x1="92" y1="20" x2="92" y2="28" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="92" cy="18" r="5" fill="var(--accent-yellow)"></circle>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="none" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2"></rect>
+</svg>
