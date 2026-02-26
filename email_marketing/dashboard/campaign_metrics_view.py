@@ -109,7 +109,17 @@ def render_campaign_metrics_view() -> None:
     # Preserve variant; rewrite sends.campaign using events map when available
     if "campaign" in sends.columns:
         sends["variant"] = sends["campaign"]
-    sends["campaign"] = sends["msg_id"].map(msg2camp).fillna(sends.get("campaign"))
+
+    # Aplica el mapeo de msg_id→campaign desde los eventos
+    mapped = sends["msg_id"].map(msg2camp)
+
+    # Si existe la columna campaign, combina; en caso contrario, usa el mapeo tal cual
+    if "campaign" in sends.columns:
+        sends["campaign"] = mapped.combine_first(sends["campaign"])
+    else:
+        sends["campaign"] = mapped
+
+    #sends["campaign"] = sends["msg_id"].map(msg2camp).fillna(sends.get("campaign"))
 
     # Ensure timestamps
     if "send_ts" in sends.columns:
