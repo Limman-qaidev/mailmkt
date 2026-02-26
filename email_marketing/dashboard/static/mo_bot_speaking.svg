@@ -1,0 +1,22 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO assistant (speaking)">
+  <style>
+    :root { --brand:#002147; --accent-yellow:#FFD100; --text:#0F172A; }
+    @keyframes wave { 0%{opacity:.2} 50%{opacity:1} 100%{opacity:.2} }
+  </style>
+  <ellipse cx="64" cy="112" rx="28" ry="6" fill="rgba(0,0,0,0.08)"></ellipse>
+  <rect x="44" y="78" width="40" height="26" rx="8" fill="var(--brand)"></rect>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="var(--brand)"></rect>
+  <rect x="36" y="32" width="56" height="40" rx="12" fill="#FFFFFF"></rect>
+  <circle cx="56" cy="52" r="4" fill="var(--text)"></circle>
+  <circle cx="72" cy="52" r="4" fill="var(--text)"></circle>
+  <!-- Speaking waves -->
+  <g transform="translate(88,48)">
+    <path d="M0 0 q8 6 0 12" fill="none" stroke="var(--accent-yellow)" stroke-width="3" opacity=".6" style="animation:wave 1.2s infinite"></path>
+    <path d="M6 -4 q10 10 0 20" fill="none" stroke="var(--accent-yellow)" stroke-width="2" opacity=".4" style="animation:wave 1.2s .2s infinite"></path>
+    <path d="M12 -8 q12 14 0 28" fill="none" stroke="var(--accent-yellow)" stroke-width="2" opacity=".25" style="animation:wave 1.2s .4s infinite"></path>
+  </g>
+  <line x1="92" y1="20" x2="92" y2="28" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="92" cy="18" r="5" fill="var(--accent-yellow)"></circle>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="none" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2"></rect>
+</svg>

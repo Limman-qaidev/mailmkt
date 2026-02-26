@@ -10,8 +10,8 @@ services:
     environment:
       - SMTP_HOST="smtp.gmail.com"
       - SMTP_PORT=587
-      - SMTP_USERNAME="salgado.n.jonathan@gmail.com"
-      - SMTP_PASSWORD=password
+      - SMTP_USERNAME="default.tester.mail@gmail.com"
+      - SMTP_PASSWORD="kepecabtieebqmds"
       - MAILGUN_API_KEY=your-api-key
       - MAILGUN_DOMAIN=example.com
     ports:

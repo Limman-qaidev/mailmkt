@@ -23,6 +23,11 @@ import streamlit.components.v1 as components
 from email_marketing.dashboard import style
 
 
+def _now_ts() -> str:
+    # Espacio entre fecha y hora; optional microseconds
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def _load_events() -> pd.DataFrame:
     """
     Load engagement events and merge in the recipient email for each msg_id.
@@ -87,7 +92,7 @@ def _compute_metrics(
     # 1) Drop duplicate (msg_id, event_type) pairs
     deduped: pd.DataFrame = events.drop_duplicates(subset=["msg_id", "event_type"])
 
-    # 2) Count unique msg_id by event_type
+    # 4) Count unique msg_id by event_type
     counts: Dict[str, int] = {
         "opens": int(deduped.loc[deduped["event_type"] == "open", "msg_id"].nunique()),
         "clicks": int(deduped.loc[deduped["event_type"] == "click", "msg_id"].nunique()),
@@ -97,12 +102,12 @@ def _compute_metrics(
         "complaints": int(deduped.loc[deduped["event_type"] == "complaint", "msg_id"].nunique()),
     }
 
-    # 3) Merge send_log with deduped to identify messages without events
+    # 5) Merge send_log with deduped to identify messages without events
     merged: pd.DataFrame = send_log[["msg_id", "send_ts"]].merge(
         deduped[["msg_id"]].drop_duplicates(), on="msg_id", how="left", indicator=True
     )
 
-    # 4) Define time threshold (7 days ago)
+    # 6) Define time threshold (7 days ago)
     now: datetime = datetime.utcnow()
     threshold: datetime = now - timedelta(days=7)
 
@@ -110,7 +115,7 @@ def _compute_metrics(
     no_event_mask: pd.Series = (merged["_merge"] == "left_only") & (merged["send_ts"] < threshold)
     stale_messages: pd.DataFrame = merged.loc[no_event_mask]
 
-    counts["deleted_or_spam"] = len(stale_messages)
+    counts["deleted_or_spam"] = len(stale_messages) + counts["deleted_or_spam"]
 
     return counts
 
@@ -162,7 +167,6 @@ def render_stats_view() -> None:
 
     # 3) Load events
     events = _load_events().drop_duplicates(subset=["msg_id", "event_type"])
-
     # 4) Load mapping (msg_id → send_ts) into map_df
     map_db_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "data", "email_map.db"
@@ -174,7 +178,6 @@ def render_stats_view() -> None:
 
     # 5) Compute metrics
     metrics = _compute_metrics(events, map_df)
-
     # 6) Display summary metrics
     cols = st.columns(5)
     cols[0].metric("Opens", metrics["opens"])
@@ -182,7 +185,7 @@ def render_stats_view() -> None:
     cols[2].metric("Unsubscribes", metrics["unsubscribes"])
     cols[3].metric("Complaints", metrics["complaints"])
     cols[4].metric("Deleted/Spam", metrics["deleted_or_spam"])
-    st.write(events.columns)
+
     # 5) Plot and table of recent events
     if not events.empty:
         _plot_event_counts(events)
