@@ -125,6 +125,18 @@ def render_campaign_metrics_view() -> None:
     generate_distribution_list_by_campaign()
 
     events["event_ts"] = pd.to_datetime(events["event_ts"], errors="coerce")
+    if "campaign" not in sends.columns and "campaign" in events.columns:
+        msg2camp = events.dropna(subset=["msg_id", "campaign"]).drop_duplicates(
+            subset=["msg_id"]
+        ).set_index("msg_id")["campaign"]
+        sends["campaign"] = sends["msg_id"].map(msg2camp)
+    elif "campaign" in sends.columns and "campaign" in events.columns:
+        msg2camp = events.dropna(subset=["msg_id", "campaign"]).drop_duplicates(
+            subset=["msg_id"]
+        ).set_index("msg_id")["campaign"]
+        existing_campaign = sends["campaign"].copy()
+        sends["campaign"] = sends["msg_id"].map(msg2camp).fillna(existing_campaign)
+
     if "signup_ts" in signups.columns:
         signups["signup_ts"] = pd.to_datetime(
             signups["signup_ts"], errors="coerce"
@@ -467,20 +479,25 @@ def render_campaign_metrics_view() -> None:
                 "unsubscribe_rate": "unsubscribe",
             }
             event_col = event_map.get(metric, metric.split("_")[0])
-            fig_ts_cmp = px.line(
-                ts_df,
-                x="days_since",
-                # y=metric.split("_")[0],
-                y=event_col,
-                color="campaign_id",
-                labels={
-                    "days_since": "Days Since Launch",
-                    # metric.split("_")[0]: "Count",
-                    event_col: "Count",
-                },
-                title=f"{metric_label} Over Time by Campaign",
-            )
-            st.plotly_chart(fig_ts_cmp, use_container_width=True)
+            if event_col not in ts_df.columns:
+                st.info(
+                    f"No time-series data available for '{event_col}' yet."
+                )
+            else:
+                fig_ts_cmp = px.line(
+                    ts_df,
+                    x="days_since",
+                    # y=metric.split("_")[0],
+                    y=event_col,
+                    color="campaign_id",
+                    labels={
+                        "days_since": "Days Since Launch",
+                        # metric.split("_")[0]: "Count",
+                        event_col: "Count",
+                    },
+                    title=f"{metric_label} Over Time by Campaign",
+                )
+                st.plotly_chart(fig_ts_cmp, use_container_width=True)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
