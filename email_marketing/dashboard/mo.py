@@ -124,8 +124,10 @@ def render_mo_chat() -> None:
             "<p>Hello {{ name }},</p><p>We have news for you about "
             f"{campaign_name.title()}.</p>"
         )
-        st.session_state["nav"] = "Email Editor"
-        st.experimental_rerun()
+        # Redirección correcta: elimina 'nav' y establece 'nav_redirect'
+        st.session_state.pop("nav", None)
+        st.session_state["nav_redirect"] = "Email Editor"
+        st.rerun()  # en Streamlit ≥1.25, replace experimental_rerun
 
     with st.expander("What MO will do"):
         st.markdown(
