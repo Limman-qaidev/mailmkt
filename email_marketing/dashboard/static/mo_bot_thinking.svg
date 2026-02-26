@@ -1,0 +1,20 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO thinking">
+  <style>
+    :root { --brand:#002147; --accent-yellow:#FFD100; }
+  </style>
+  <ellipse cx="64" cy="112" rx="28" ry="6" fill="rgba(0,0,0,0.08)"></ellipse>
+  <rect x="44" y="78" width="40" height="26" rx="8" fill="var(--brand)"></rect>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="var(--brand)"></rect>
+  <rect x="36" y="32" width="56" height="40" rx="12" fill="#FFFFFF"></rect>
+  <circle cx="56" cy="52" r="4" fill="#0F172A"></circle>
+  <circle cx="72" cy="52" r="4" fill="#0F172A"></circle>
+  <path d="M54 62 Q64 65 74 62" fill="none" stroke="#0F172A" stroke-width="2" stroke-linecap="round"></path>
+  <line x1="92" y1="20" x2="92" y2="28" stroke="var(--brand)" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="92" cy="18" r="5" fill="var(--accent-yellow)"></circle>
+  <!-- Thought bubbles -->
+  <circle cx="98" cy="36" r="6" fill="var(--accent-yellow)" opacity=".95"></circle>
+  <circle cx="106" cy="28" r="4" fill="var(--accent-yellow)" opacity=".95"></circle>
+  <circle cx="112" cy="22" r="3" fill="var(--accent-yellow)" opacity=".95"></circle>
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="none" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2"></rect>
+</svg>

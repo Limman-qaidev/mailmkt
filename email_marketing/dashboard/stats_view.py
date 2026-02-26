@@ -131,6 +131,10 @@ def _compute_metrics(
             deduped.loc[
                 deduped["event_type"] == "complaint", "msg_id"
                 ].nunique()),
+        "deleted_or_spam": int(
+            deduped.loc[
+                deduped["event_type"] == "deleted_or_spam", "msg_id"
+                ].nunique()),
     }
 
     # 5) Merge send_log with deduped to identify messages without events
@@ -152,7 +156,7 @@ def _compute_metrics(
     )
     stale_messages: pd.DataFrame = merged.loc[no_event_mask]
 
-    counts["deleted_or_spam"] = len(stale_messages)
+    counts["deleted_or_spam"] = len(stale_messages) + counts["deleted_or_spam"]
 
     return counts
 
@@ -217,7 +221,6 @@ def render_stats_view() -> None:
 
     # 5) Compute metrics
     metrics = _compute_metrics(events, map_df)
-
     # 6) Display summary metrics
     cols = st.columns(5)
     cols[0].metric("Opens", metrics["opens"])
