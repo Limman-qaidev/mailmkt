@@ -149,9 +149,9 @@ def render_campaign_metrics_view() -> None:
     if campaigns.empty:
         st.info("No campaign data available.")
         return
-    view_mode = st.sidebar.radio(
-        "View mode", ["Single campaign", "Compare campaigns"]
-        )
+        view_mode = st.sidebar.radio(
+            "View mode", ["Single campaign", "Compare campaigns"]
+            )
         n_opens = float(mdf["N_opens"].sum()) if "N_opens" in cols else 0.0
         n_clicks = float(mdf["N_clicks"].sum()) if "N_clicks" in cols else 0.0
 
