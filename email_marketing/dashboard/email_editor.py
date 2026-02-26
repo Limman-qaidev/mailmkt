@@ -246,8 +246,13 @@ def _render_recipient_manager(base_emails: List[str]) -> List[str]:
 def render_email_editor() -> None:
     """Render the email editor page (stable across reruns) with recipient manager."""
     import re  # for manual exclusions parsing
+    import textwrap
 
     st.header("Email Campaign Editor")
+
+    # ✅ IMPORTANT: clear pending nav triggers (coming from MO Assistant)
+    st.session_state.pop("nav_redirect", None)
+    st.session_state.pop("pending_nav", None)
 
     # ---------- Persistent session state ----------
     if "recipient_base" not in st.session_state:
@@ -286,7 +291,7 @@ def render_email_editor() -> None:
     modes = ["Upload list"]
     if has_mo:
         modes.insert(0, "From MO Assistant (preloaded)")
-    mode = st.radio("Recipient source", modes, index=0 if has_mo else 0)
+    mode = st.radio("Recipient source", modes, index=0, key="recipient_source_mode")
 
     def _normalize_email(email: str) -> str:
         s = str(email).strip().lower()
