@@ -277,9 +277,8 @@ def _load_email_env_from_secrets() -> None:
         pass
 
 
-
 def main() -> None:
-    """Render the Streamlit dashboard and optionally launch the tracking API."""
+    """Render the Streamlit dashboard and, opcionalmente, iniciar el servidor de tracking."""
     st.set_page_config(
         page_title="MauBank – Mail Watcher",
         layout="wide",
@@ -289,22 +288,16 @@ def main() -> None:
     if hasattr(style, "apply_matplotlib_theme"):
         style.apply_matplotlib_theme()
 
-    ###########################################################
-    ## ESTO ES SOLO PARA QUE FUNCIONE EN STREAMLIT CLOUD
-    ###########################################################
     _load_email_env_from_secrets()
-    # Brand bar (visible en todas las páginas)
-    # _render_brandbar(title="Mail Watcher")
 
     if os.environ.get("RUN_TRACKING_WITH_STREAMLIT", "false").lower() in {"1", "true", "yes"}:
         _start_tracking_server()
 
-    # -------- Deferred navigation handling (before building the selectbox) --------
-    # Any sub-page can request a redirect by setting:
-    #   st.session_state["nav_redirect"] = "<Target Page Name>"
-    # or legacy:
-    #   st.session_state["pending_nav"] = "<Target Page Name>"
-    redirect_target = st.session_state.pop("nav_redirect", None) or st.session_state.pop("pending_nav", None)
+    # 1️⃣ Gestionar peticiones de redirección
+    redirect_target = (
+        st.session_state.pop("nav_redirect", None)
+        or st.session_state.pop("pending_nav", None)
+    )
 
     pages = (
         "MO Assistant",
@@ -314,38 +307,35 @@ def main() -> None:
         "Customer 360º",
     )
 
-    # If a redirect is requested, clear previous widget value so `index` applies
-    default_index = 0
-    if isinstance(redirect_target, str) and redirect_target in pages:
-        default_index = pages.index(redirect_target)
-        if "nav" in st.session_state:
-            del st.session_state["nav"]  # ensure the selectbox respects `index`
+    # 2️⃣ Fuente de verdad: estado de página (no ligado a ningún widget)
+    if "page" not in st.session_state:
+        st.session_state["page"] = pages[0]  # valor inicial
 
-    # Sidebar title and page selector
+    # Aplicar redirección válida: actualizamos page y, si existe, quitamos el valor previo del selectbox
+    if isinstance(redirect_target, str) and redirect_target in pages:
+        st.session_state["page"] = redirect_target
+        if "nav_select" in st.session_state:
+            del st.session_state["nav_select"]
+
+    # 3️⃣ Sidebar: logo y título
     _render_sidebar_brand(mini=True)
     st.sidebar.markdown("### Mail Watcher")
 
-    # Keep current page stable across reruns unless a redirect was requested
-    current_page = st.session_state.get("nav", None)
-    if redirect_target and redirect_target in pages:
-        default_index = pages.index(redirect_target)
-    elif current_page in pages:
-        default_index = pages.index(current_page)
-    else:
-        default_index = 0  # fallback
-
-    page = st.sidebar.selectbox(
+    # 4️⃣ Selector de navegación (solo UI)
+    current_index = pages.index(st.session_state["page"])
+    selected_page = st.sidebar.selectbox(
         "Navigate",
         pages,
-        index=default_index,
-        key="nav",
+        index=current_index,
+        key="nav_select",
     )
+    st.session_state["page"] = selected_page
 
+    # Avatar contextual en la sidebar
+    _render_sidebar_avatar_for_page(st.session_state["page"], size_px=120)
 
-    # Sidebar avatar (page-aware). Hidden on "MO Assistant".
-    _render_sidebar_avatar_for_page(page, size_px=120)
-
-    # -------- Routing --------
+    # 5️⃣ Enrutado en función del estado
+    page = st.session_state["page"]
     if page == "MO Assistant":
         mo_assistant.render_mo_assistant()
     elif page == "Email Editor":
