@@ -278,7 +278,6 @@ def _load_email_env_from_secrets() -> None:
 
 
 def main() -> None:
-    """Render the Streamlit dashboard and, opcionalmente, iniciar el servidor de tracking."""
     st.set_page_config(
         page_title="MauBank – Mail Watcher",
         layout="wide",
@@ -293,7 +292,7 @@ def main() -> None:
     if os.environ.get("RUN_TRACKING_WITH_STREAMLIT", "false").lower() in {"1", "true", "yes"}:
         _start_tracking_server()
 
-    # 1️⃣ Gestionar peticiones de redirección
+    # --- Redirects (consume once) ---
     redirect_target = (
         st.session_state.pop("nav_redirect", None)
         or st.session_state.pop("pending_nav", None)
@@ -307,34 +306,28 @@ def main() -> None:
         "Customer 360º",
     )
 
-    # 2️⃣ Fuente de verdad: estado de página (no ligado a ningún widget)
+    # --- Single source of truth: page ---
     if "page" not in st.session_state:
-        st.session_state["page"] = pages[0]  # valor inicial
+        st.session_state["page"] = pages[0]
 
-    # Aplicar redirección válida: actualizamos page y, si existe, quitamos el valor previo del selectbox
+    # Apply redirect BEFORE widget instantiation
     if isinstance(redirect_target, str) and redirect_target in pages:
         st.session_state["page"] = redirect_target
-        if "nav_select" in st.session_state:
-            del st.session_state["nav_select"]
 
-    # 3️⃣ Sidebar: logo y título
+    # --- Sidebar ---
     _render_sidebar_brand(mini=True)
     st.sidebar.markdown("### Mail Watcher")
 
-    # 4️⃣ Selector de navegación (solo UI)
-    current_index = pages.index(st.session_state["page"])
-    selected_page = st.sidebar.selectbox(
+    st.sidebar.selectbox(
         "Navigate",
         pages,
-        index=current_index,
-        key="nav_select",
+        index=pages.index(st.session_state["page"]),
+        key="page",   # 👈 IMPORTANT: widget writes directly into session_state["page"]
     )
-    st.session_state["page"] = selected_page
 
-    # Avatar contextual en la sidebar
     _render_sidebar_avatar_for_page(st.session_state["page"], size_px=120)
 
-    # 5️⃣ Enrutado en función del estado
+    # --- Routing ---
     page = st.session_state["page"]
     if page == "MO Assistant":
         mo_assistant.render_mo_assistant()
