@@ -1,0 +1,79 @@
+<!--?xml version="1.0" encoding="UTF-8"?-->
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MO assistant writing">
+  <style>
+    :root { --brand:#002147; --accent-yellow:#FFD100; --text:#0F172A; --ink:#1D4ED8; }
+    /* Blink: eyes open ~98% of time, quick close ~120–160ms */
+    @keyframes blink {
+      0%, 96%, 100% { transform: scaleY(0.08); }  /* OPEN (thin lids) */
+      97%, 98%      { transform: scaleY(1); }     /* CLOSED */
+    }
+    /* Typing dots pulse sequentially */
+    @keyframes typing {
+      0%, 20%   { opacity: .25; transform: translateY(0); }
+      30%, 60%  { opacity: 1;   transform: translateY(-1px); }
+      70%, 100% { opacity: .25; transform: translateY(0); }
+    }
+    /* Pen glides left→right and loops */
+    @keyframes write {
+      0%   { transform: translateX(0px);   opacity:.85; }
+      45%  { transform: translateX(26px);  opacity:1; }
+      50%  { opacity:.95; }
+      100% { transform: translateX(0px);   opacity:.85; }
+    }
+    @media (prefers-reduced-motion: reduce){
+      .anim { animation: none !important; }
+    }
+    /* Eyelids per-eye origins */
+    .lid { animation: blink 4.8s ease-in-out infinite; }
+    .l1  { transform-origin: 56px 52px; }
+    .l2  { transform-origin: 72px 52px; }
+  </style>
+
+  <!-- Shadow -->
+  <ellipse cx="64" cy="112" rx="28" ry="6" fill="rgba(0,0,0,0.08)"></ellipse>
+
+  <!-- Body / base -->
+  <rect x="44" y="78" width="40" height="26" rx="8" fill="var(--brand)"></rect>
+
+  <!-- Head shell -->
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="var(--brand)"></rect>
+  <!-- Face panel -->
+  <rect x="36" y="32" width="56" height="40" rx="12" fill="#FFFFFF"></rect>
+
+  <!-- Eyes (pupils) -->
+  <circle cx="56" cy="52" r="4.4" fill="var(--text)"></circle>
+  <circle cx="72" cy="52" r="4.4" fill="var(--text)"></circle>
+
+  <!-- Eyelids (white) -->
+  <rect class="lid l1 anim" x="50" y="46" width="12" height="12" rx="6" fill="#FFFFFF"></rect>
+  <rect class="lid l2 anim" x="66" y="46" width="12" height="12" rx="6" fill="#FFFFFF"></rect>
+
+  <!-- Mouth (focused / slight smile) -->
+  <path d="M52 60 Q64 66 76 60" fill="none" stroke="var(--text)" stroke-width="2.2" stroke-linecap="round"></path>
+
+  <!-- "Writing" area inside the face panel -->
+  <!-- Baseline where the pen writes -->
+  <line x1="42" y1="66" x2="86" y2="66" stroke="#E5E7EB" stroke-width="2" stroke-linecap="round"></line>
+
+  <!-- Typing dots (sequential pulse) -->
+  <circle class="anim" cx="54" cy="66" r="2.2" fill="#6B7280" style="animation:typing 1.4s ease-in-out .0s infinite;"></circle>
+  <circle class="anim" cx="64" cy="66" r="2.2" fill="#6B7280" style="animation:typing 1.4s ease-in-out .2s infinite;"></circle>
+  <circle class="anim" cx="74" cy="66" r="2.2" fill="#6B7280" style="animation:typing 1.4s ease-in-out .4s infinite;"></circle>
+
+  <!-- Pen (nib) moving along the baseline -->
+  <g class="anim" style="animation:write 2.4s ease-in-out .1s infinite;">
+    <!-- Pen body -->
+    <rect x="52" y="61" width="10" height="5" rx="2.5" fill="#93C5FD"></rect>
+    <!-- Nib -->
+    <polygon points="62,61 68,63.5 62,66" fill="var(--ink)"></polygon>
+    <!-- Tiny stroke mark -->
+    <line x1="68" y1="63.5" x2="70" y2="63.5" stroke="var(--ink)" stroke-width="1.4" stroke-linecap="round"></line>
+  </g>
+
+  <!-- Antenna -->
+  <line x1="92" y1="20" x2="92" y2="28" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="92" cy="18" r="5" fill="var(--accent-yellow)"></circle>
+
+  <!-- Head outline -->
+  <rect x="28" y="24" width="72" height="56" rx="16" fill="none" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2"></rect>
+</svg>
