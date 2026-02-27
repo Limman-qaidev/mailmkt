@@ -11,10 +11,27 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from datetime import datetime
+from typing import Tuple
 
 from analytics.db import load_all_data
 from analytics.metrics import compute_campaign_metrics
 
+
+def _db_fingerprint(paths: Tuple[str, str, str]) -> str:
+    parts = []
+    for p in paths:
+        try:
+            st_ = os.stat(p)
+            parts.append(f"{p}:{st_.st_mtime_ns}:{st_.st_size}")
+        except FileNotFoundError:
+            parts.append(f"{p}:missing")
+    return "|".join(parts)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_load_all_data_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    # fp is intentionally unused except as a cache key
+    return load_all_data(events_db, sends_db, campaigns_db)
 
 @st.cache_data(show_spinner=False)
 def _cached_load_all_data(events_db: str, sends_db: str, campaigns_db: str):
@@ -24,6 +41,41 @@ def _cached_load_all_data(events_db: str, sends_db: str, campaigns_db: str):
 @st.cache_data(show_spinner=False)
 def _cached_compute_metrics(sends: pd.DataFrame, events: pd.DataFrame, signups: pd.DataFrame):
     return compute_campaign_metrics(sends, events, signups)
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_compute_metrics_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+
+    # Minimal harmonization here (must match your later logic)
+    for df in (events, sends, signups):
+        if "campaign" in df.columns:
+            df["campaign"] = df["campaign"].astype(str)
+
+    # If you rely on msg_id->campaign mapping, do it here once
+    msg2camp = (
+        events.loc[events["campaign"].notna(), ["msg_id", "campaign"]]
+        .drop_duplicates("msg_id")
+        .set_index("msg_id")["campaign"]
+    )
+    mapped = sends["msg_id"].map(msg2camp)
+    if "campaign" in sends.columns:
+        sends["variant"] = sends["campaign"]
+        sends["campaign"] = mapped.combine_first(sends["campaign"])
+    else:
+        sends["campaign"] = mapped
+
+    # Timestamps
+    if "send_ts" in sends.columns:
+        sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
+    if "event_ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(events["event_ts"], errors="coerce")
+    elif "ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
+    if "signup_ts" in signups.columns:
+        signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
+
+    metrics_df = compute_campaign_metrics(sends, events, signups)
+    return metrics_df, campaigns
 
 def _as_utc(x) -> pd.Timestamp:
     """Parse any datetime-like into a UTC-aware Timestamp (NaT si no válido)."""
@@ -96,6 +148,9 @@ def render_campaign_metrics_view() -> None:
     st.header("Campaign Analytics")
 
     events_db, sends_db, campaigns_db = _default_db_paths()
+    fp = _db_fingerprint((events_db, sends_db, campaigns_db))
+
+    events, sends, campaigns, signups = _cached_load_all_data_by_fp(fp, events_db, sends_db, campaigns_db)
 
     try:
         #events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
@@ -144,7 +199,12 @@ def render_campaign_metrics_view() -> None:
         signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
 
     # Compatibility
-    generate_distribution_list_by_campaign()
+    with st.sidebar:
+        st.markdown("### Maintenance")
+        if st.button("Regenerate distribution lists (CSV)", key="btn_regen_distro"):
+            with st.spinner("Generating distribution lists..."):
+                generate_distribution_list_by_campaign()
+            st.success("Distribution lists updated.")
 
     # -------------- Helpers --------------
     def _date_bounds() -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -281,7 +341,8 @@ def render_campaign_metrics_view() -> None:
     # ======================= MODE 1: Single =======================
     if view_mode == "Single campaign":
         try:
-            metrics_df = compute_campaign_metrics(sends, events, signups)
+            #metrics_df = compute_campaign_metrics(sends, events, signups)
+            metrics_df, campaigns = _cached_compute_metrics_by_fp(fp, events_db, sends_db, campaigns_db)
         except Exception as exc:
             st.error(f"Failed to compute metrics: {exc}")
             return

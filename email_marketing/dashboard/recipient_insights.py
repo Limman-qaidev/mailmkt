@@ -2,18 +2,90 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import pandas as pd
 import numpy as np
 import streamlit as st
 import re
+import os
 
 from email_marketing.analytics.db import load_all_data
 from email_marketing.analytics.user_metrics import (
     build_user_aggregates,
     compute_eb_rates,
 )
+
+
+def _db_fingerprint(paths: Tuple[str, str, str]) -> str:
+    """
+    Build a stable fingerprint for cache invalidation based on file mtime + size.
+    This avoids hashing huge DataFrames on every rerun.
+    """
+    parts: list[str] = []
+    for p in paths:
+        try:
+            st_ = os.stat(p)
+            parts.append(f"{p}:{st_.st_mtime_ns}:{st_.st_size}")
+        except FileNotFoundError:
+            parts.append(f"{p}:missing")
+    return "|".join(parts)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_load_all_data_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    """
+    Cached DB load. 'fp' is used only as a cache key.
+    """
+    return load_all_data(events_db, sends_db, campaigns_db)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_customer360_artifacts_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    """
+    Cached artifacts for Customer 360 view:
+    - events prepared with email
+    - campaign topic map
+    - per-recipient topic metrics
+    - users aggregates + rates
+    """
+    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+
+    # Ensure consistent dtypes (avoid repeated coercion on reruns)
+    for df_ in (events, sends, campaigns, signups):
+        if "campaign" in df_.columns:
+            df_["campaign"] = df_["campaign"].astype(str)
+
+    events_prepared = _prepare_events_with_email(events, sends)
+    campaign_topic_map = _build_campaign_topic_map(campaigns)
+
+    topic_metrics_df = _recipient_topic_metrics(
+        events_prepared, sends, signups, campaign_topic_map
+    )
+
+    users_df = build_user_aggregates(events_prepared, sends, signups)
+    if not users_df.empty:
+        users_df = compute_eb_rates(users_df)
+
+    return events_prepared, sends, campaigns, signups, campaign_topic_map, topic_metrics_df, users_df
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_customer360_artifacts(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+
+    for df_ in (events, sends, signups):
+        if "campaign" in df_.columns:
+            df_["campaign"] = df_["campaign"].astype(str)
+
+    events = _prepare_events_with_email(events, sends)
+    ev_t, sd_t, _ = _prepare_ev_sd_with_topics(events, sends, campaigns)
+    corpus = _topic_corpus(ev_t, sd_t, signups)
+    owners_mi = _owners_series(ev_t, signups)
+
+    users_df = build_user_aggregates(events, sends, signups)
+    users_df = compute_eb_rates(users_df) if not users_df.empty else users_df
+
+    return corpus, owners_mi, users_df
 
 
 def _extract_topic_from_text(text: str) -> str:
@@ -341,7 +413,8 @@ def render_recipient_insights() -> None:
 
     events_db, sends_db, campaigns_db = _default_db_paths()
     try:
-        events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+        fp = _db_fingerprint((events_db, sends_db, campaigns_db))
+        events, sends, campaigns, signups = _cached_load_all_data_by_fp(fp, events_db, sends_db, campaigns_db)
     except Exception as exc:
         st.error(f"Failed to load data: {exc}")
         return
