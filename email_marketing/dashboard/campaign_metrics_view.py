@@ -280,7 +280,44 @@ def render_campaign_metrics_view() -> None:
         info_tab, metrics_tab = st.tabs(["Campaign Info", "Metrics"])
 
         campaign_options = campaigns["name"]
-        selected = st.sidebar.selectbox("Select campaign", campaign_options)
+        # -----------------------------
+        # Campaign selection (safe)
+        # -----------------------------
+
+        # Determine the campaign label column in campaigns.db
+        if "campaign" in campaigns.columns:
+            campaign_col = "campaign"
+        elif "name" in campaigns.columns:
+            campaign_col = "name"
+        elif "campaign_id" in campaigns.columns:
+            # fallback: still allow selection by ID if names are missing
+            campaign_col = "campaign_id"
+        else:
+            st.error("campaigns.db has no recognizable campaign identifier column.")
+            return
+
+        campaign_names_all = campaigns[campaign_col].astype(str).tolist()
+
+        # Only allow campaigns that actually have metrics (i.e., exist in metrics_df.index)
+        available_campaigns = [c for c in campaign_names_all if c in metrics_df.index]
+
+        if not available_campaigns:
+            st.info(
+                "No campaigns with metrics are available. "
+                "This usually means there are no matching events/sends in the analytics database."
+            )
+            return
+
+        # If Streamlit kept an old selection that no longer exists, reset it
+        state_key = "campaign_metrics_selected"
+        if st.session_state.get(state_key) not in available_campaigns:
+            st.session_state[state_key] = available_campaigns[0]
+
+        selected = st.selectbox(
+            "Select campaign",
+            options=available_campaigns,
+            key=state_key,
+        )
         campaign_id = selected
 
         with info_tab:
@@ -319,6 +356,13 @@ def render_campaign_metrics_view() -> None:
                 st.caption(f"{pct}% complete ({elapsed}/{total_days} days)")
 
         with metrics_tab:
+            if selected not in metrics_df.index:
+                st.warning(
+                    f"No metrics available for '{selected}'. "
+                    "It exists in campaigns.db but has no matching events in the analytics DB (possibly pruned)."
+                )
+                return
+
             m = metrics_df.loc[selected, :]
             if m.empty:
                 st.warning("No metrics available for this campaign")
@@ -398,12 +442,42 @@ def render_campaign_metrics_view() -> None:
             return
 
         info_tab, metrics_tab = st.tabs(["Campaign Info", "Metrics"])
-        campaign_options = campaigns["name"]
-        selected_list = st.sidebar.multiselect("Select campaigns to compare", campaign_options)
-        campaign_ids = [s for s in selected_list]
 
-        if not campaign_ids:
-            st.warning("Select at least two campaigns to compare")
+        # -----------------------------
+        # Campaign selection (safe)
+        # Only campaigns that have metrics are selectable
+        # -----------------------------
+        if "name" not in campaigns.columns:
+            st.error("campaigns.db must contain a 'name' column.")
+            return
+
+        campaign_names_all = campaigns["name"].astype(str).tolist()
+        available_campaigns = [c for c in campaign_names_all if c in metrics_df.index]
+
+        if not available_campaigns:
+            st.info(
+                "No campaigns with metrics are available. "
+                "This usually means there are no matching events/sends in the analytics database."
+            )
+            return
+
+        # Keep only valid selections if Streamlit cached old values
+        state_key = "cmp_campaigns_selected"
+        prev = st.session_state.get(state_key, [])
+        if isinstance(prev, list):
+            st.session_state[state_key] = [c for c in prev if c in available_campaigns]
+
+        selected_list = st.sidebar.multiselect(
+            "Select campaigns to compare",
+            options=available_campaigns,
+            default=st.session_state.get(state_key, []) or available_campaigns[: min(2, len(available_campaigns))],
+            key=state_key,
+        )
+
+        campaign_ids = [str(s) for s in selected_list]
+
+        if len(campaign_ids) < 2:
+            st.warning("Select at least two campaigns to compare.")
             return
         metric = st.sidebar.selectbox(
             "Metric to compare",
@@ -440,10 +514,8 @@ def render_campaign_metrics_view() -> None:
                     st.caption(f"{pct}% complete ({elapsed}/{total_days} days)")
 
         with metrics_tab:
-            cmp_df = metrics_df.reset_index()
-            if "campaign_id" not in cmp_df.columns:
-                cmp_df = cmp_df.rename(columns={cmp_df.columns[0]: "campaign_id"})
-            cmp_df = cmp_df[cmp_df["campaign_id"].isin(campaign_ids)]
+            cmp_df = metrics_df.reset_index(names="campaign_id")
+            cmp_df = cmp_df[cmp_df["campaign_id"].astype(str).isin(campaign_ids)]
             fig_cmp = px.bar(
                 cmp_df,
                 x="campaign_id",
