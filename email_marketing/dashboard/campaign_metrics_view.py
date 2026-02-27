@@ -145,6 +145,99 @@ def _cached_compute_metrics_by_fp(fp: str, events_db: str, sends_db: str, campai
     metrics_df = compute_campaign_metrics(sends, events, signups)
     return metrics_df, campaigns
 
+
+def _campaign_filter_tuple(campaign_filter: Iterable[str] | None) -> tuple[str, ...]:
+    if not campaign_filter:
+        return tuple()
+    return tuple(sorted({str(x) for x in campaign_filter if str(x).strip()}))
+
+
+def _filter_period_frames(
+    sends_df: pd.DataFrame,
+    events_df: pd.DataFrame,
+    signups_df: pd.DataFrame,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    campaign_filter: tuple[str, ...] | set[str] | None,
+    filter_mode: str = "exclude",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    s = sends_df
+    e = events_df
+    g = signups_df
+
+    if "send_ts" in s.columns:
+        s = s.loc[(s["send_ts"] >= start) & (s["send_ts"] <= end)]
+    if "event_ts" in e.columns:
+        e = e.loc[(e["event_ts"] >= start) & (e["event_ts"] <= end)]
+    if "signup_ts" in g.columns:
+        g = g.loc[(g["signup_ts"] >= start) & (g["signup_ts"] <= end)]
+
+    camps = set(campaign_filter or ())
+    if camps:
+        if filter_mode == "include":
+            s = s.loc[s["campaign"].isin(camps)]
+            e = e.loc[e["campaign"].isin(camps)]
+            g = g.loc[g["campaign"].isin(camps)]
+        else:
+            s = s.loc[~s["campaign"].isin(camps)]
+            e = e.loc[~e["campaign"].isin(camps)]
+            g = g.loc[~g["campaign"].isin(camps)]
+    return s, e, g
+
+
+def _daily_series_from_frames(e: pd.DataFrame, g: pd.DataFrame) -> pd.DataFrame:
+    df = pd.DataFrame(index=pd.Index([], name="date"))
+    if not e.empty and "event_ts" in e.columns:
+        e2 = e.assign(date=e["event_ts"].dt.date)
+        opens = e2.query("event_type == 'open'").groupby("date")["msg_id"].nunique().rename("opens")
+        clicks = e2.query("event_type == 'click'").groupby("date")["msg_id"].nunique().rename("clicks")
+        df = pd.concat([opens, clicks], axis=1).fillna(0.0)
+    if not g.empty and "signup_ts" in g.columns:
+        g2 = g.assign(date=g["signup_ts"].dt.date)
+        signups = g2.groupby("date")["signup_id"].nunique().rename("signups")
+        df = pd.concat([df, signups], axis=1).fillna(0.0)
+    return df.reset_index().sort_values("date")
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _cached_period_metrics_by_fp(
+    fp: str,
+    events_db: str,
+    sends_db: str,
+    campaigns_db: str,
+    start_iso: str,
+    end_iso: str,
+    campaign_filter: tuple[str, ...],
+    filter_mode: str,
+) -> pd.DataFrame:
+    events, sends, _campaigns, signups, _metrics = _cached_campaign_bundle_by_fp(
+        fp, events_db, sends_db, campaigns_db
+    )
+    start = pd.to_datetime(start_iso)
+    end = pd.to_datetime(end_iso)
+    s, e, g = _filter_period_frames(sends, events, signups, start, end, campaign_filter, filter_mode)
+    return compute_campaign_metrics(s, e, g)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _cached_period_daily_by_fp(
+    fp: str,
+    events_db: str,
+    sends_db: str,
+    campaigns_db: str,
+    start_iso: str,
+    end_iso: str,
+    campaign_filter: tuple[str, ...],
+    filter_mode: str,
+) -> pd.DataFrame:
+    events, sends, _campaigns, signups, _metrics = _cached_campaign_bundle_by_fp(
+        fp, events_db, sends_db, campaigns_db
+    )
+    start = pd.to_datetime(start_iso)
+    end = pd.to_datetime(end_iso)
+    _s, e, g = _filter_period_frames(sends, events, signups, start, end, campaign_filter, filter_mode)
+    return _daily_series_from_frames(e, g)
+
 def _as_utc(x) -> pd.Timestamp:
     """Parse any datetime-like into a UTC-aware Timestamp (NaT si no válido)."""
     ts = pd.to_datetime(x, errors="coerce", utc=True)
@@ -254,26 +347,9 @@ def render_campaign_metrics_view() -> None:
         campaign_filter: set[str] | None,
         filter_mode: str = "exclude",
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        s = sends_df.copy()
-        e = events_df.copy()
-        g = signups_df.copy()
-        if "send_ts" in s.columns:
-            s = s[(s["send_ts"] >= start) & (s["send_ts"] <= end)]
-        if "event_ts" in e.columns:
-            e = e[(e["event_ts"] >= start) & (e["event_ts"] <= end)]
-        if "signup_ts" in g.columns:
-            g = g[(g["signup_ts"] >= start) & (g["signup_ts"] <= end)]
-
-        if campaign_filter:
-            if filter_mode == "include":
-                s = s[s["campaign"].isin(campaign_filter)]
-                e = e[e["campaign"].isin(campaign_filter)]
-                g = g[g["campaign"].isin(campaign_filter)]
-            else:
-                s = s[~s["campaign"].isin(campaign_filter)]
-                e = e[~e["campaign"].isin(campaign_filter)]
-                g = g[~g["campaign"].isin(campaign_filter)]
-        return s, e, g
+        return _filter_period_frames(
+            sends_df, events_df, signups_df, start, end, _campaign_filter_tuple(campaign_filter), filter_mode
+        )
 
     def _aggregate_metrics(
         mdf: pd.DataFrame,
@@ -325,18 +401,7 @@ def render_campaign_metrics_view() -> None:
         return out
 
     def _daily_series(e: pd.DataFrame, s: pd.DataFrame, g: pd.DataFrame) -> pd.DataFrame:
-        df = pd.DataFrame(index=pd.Index([], name="date"))
-        if not e.empty and "event_ts" in e.columns:
-            e = e.assign(date=e["event_ts"].dt.date)
-            opens = e.query("event_type == 'open'").groupby("date")["msg_id"].nunique().rename("opens")
-            clicks = e.query("event_type == 'click'").groupby("date")["msg_id"].nunique().rename("clicks")
-            df = pd.concat([opens, clicks], axis=1).fillna(0.0)
-        if not g.empty and "signup_ts" in g.columns:
-            g = g.assign(date=g["signup_ts"].dt.date)
-            signups = g.groupby("date")["signup_id"].nunique().rename("signups")
-            df = pd.concat([df, signups], axis=1).fillna(0.0)
-        df = df.reset_index().sort_values("date")
-        return df
+        return _daily_series_from_frames(e, g)
 
     def _pct_change(cur: float, prev: float) -> str:
         try:
@@ -364,12 +429,6 @@ def render_campaign_metrics_view() -> None:
 
     # ======================= MODE 1: Single =======================
     if view_mode == "Single campaign":
-        try:
-            #metrics_df = compute_campaign_metrics(sends, events, signups)
-            metrics_df, campaigns = _cached_compute_metrics_by_fp(fp, events_db, sends_db, campaigns_db)
-        except Exception as exc:
-            st.error(f"Failed to compute metrics: {exc}")
-            return
         if campaigns.empty:
             st.info("No campaign data available.")
             return
@@ -529,12 +588,6 @@ def render_campaign_metrics_view() -> None:
 
     # ======================= MODE 2: Compare campaigns =======================
     if view_mode == "Compare campaigns":
-        try:
-            #metrics_df = compute_campaign_metrics(sends, events, signups)
-            metrics_df = _cached_compute_metrics(sends, events, signups)
-        except Exception as exc:
-            st.error(f"Failed to compute metrics: {exc}")
-            return
         if campaigns.empty:
             st.info("No campaign data available.")
             return
@@ -740,25 +793,28 @@ def render_campaign_metrics_view() -> None:
     if view_mode == "Aggregated period":
         a_start, a_end, a_set, a_mode = _sidebar_period_controls("A")
 
-        sA, eA, gA = _filter_period(sends, events, signups, a_start, a_end, a_set, a_mode)
+        a_key = _campaign_filter_tuple(a_set)
         try:
-            mA = compute_campaign_metrics(sA, eA, gA)
+            mA = _cached_period_metrics_by_fp(
+                str(fp), events_db, sends_db, campaigns_db, str(a_start), str(a_end), a_key, a_mode
+            )
         except Exception as exc:
             st.error(f"Failed to compute metrics in period A: {exc}")
             return
-        aggA = _aggregate_metrics(mA, eA, sA)
+        aggA = _aggregate_metrics(mA, None, None)
 
         # Previous equal-length period for A
         period_days = max(1, (a_end.normalize() - a_start.normalize()).days + 1)
         prev_end = a_start - pd.Timedelta(seconds=1)
         prev_start = prev_end - pd.Timedelta(days=period_days - 1)
 
-        sP, eP, gP = _filter_period(sends, events, signups, prev_start, prev_end, a_set, a_mode)
         try:
-            mP = compute_campaign_metrics(sP, eP, gP)
+            mP = _cached_period_metrics_by_fp(
+                str(fp), events_db, sends_db, campaigns_db, str(prev_start), str(prev_end), a_key, a_mode
+            )
         except Exception:
             mP = pd.DataFrame()
-        aggP = _aggregate_metrics(mP, eP, sP) if not mP.empty else {
+        aggP = _aggregate_metrics(mP, None, None) if not mP.empty else {
             "N_sends": 0.0, "N_opens": 0.0, "N_clicks": 0.0, "N_signups": 0.0, "N_unsubscribes": 0.0,
             "open_rate": 0.0, "ctr": 0.0, "signup_rate": 0.0, "unsubscribe_rate": 0.0
         }
@@ -794,7 +850,9 @@ def render_campaign_metrics_view() -> None:
         r4.metric("Unsubscribe rate", f"{aggA['unsubscribe_rate']:.1%}", delta=_pp_change(aggA["unsubscribe_rate"], aggP["unsubscribe_rate"]), delta_color="inverse")
 
         # Daily series (period A)
-        dailyA = _daily_series(eA, sA, gA)
+        dailyA = _cached_period_daily_by_fp(
+            str(fp), events_db, sends_db, campaigns_db, str(a_start), str(a_end), a_key, a_mode
+        )
         st.subheader("Daily engagement (period A)")
         if dailyA.empty:
             st.info("No events in this period.")
@@ -829,20 +887,23 @@ def render_campaign_metrics_view() -> None:
         a_start, a_end, a_set, a_mode = _sidebar_period_controls("A")
         b_start, b_end, b_set, b_mode = _sidebar_period_controls("B")
 
-        # Filter
-        sA, eA, gA = _filter_period(sends, events, signups, a_start, a_end, a_set, a_mode)
-        sB, eB, gB = _filter_period(sends, events, signups, b_start, b_end, b_set, b_mode)
+        a_key = _campaign_filter_tuple(a_set)
+        b_key = _campaign_filter_tuple(b_set)
 
         # Metrics per period
         try:
-            mA = compute_campaign_metrics(sA, eA, gA)
-            mB = compute_campaign_metrics(sB, eB, gB)
+            mA = _cached_period_metrics_by_fp(
+                str(fp), events_db, sends_db, campaigns_db, str(a_start), str(a_end), a_key, a_mode
+            )
+            mB = _cached_period_metrics_by_fp(
+                str(fp), events_db, sends_db, campaigns_db, str(b_start), str(b_end), b_key, b_mode
+            )
         except Exception as exc:
             st.error(f"Failed to compute metrics for periods: {exc}")
             return
 
-        aggA = _aggregate_metrics(mA, eA, sA)
-        aggB = _aggregate_metrics(mB, eB, sB)
+        aggA = _aggregate_metrics(mA, None, None)
+        aggB = _aggregate_metrics(mB, None, None)
 
         # Previous equal-length periods for A and B
         daysA = max(1, (a_end.normalize() - a_start.normalize()).days + 1)
@@ -853,23 +914,24 @@ def render_campaign_metrics_view() -> None:
         prevB_end = b_start - pd.Timedelta(seconds=1)
         prevB_start = prevB_end - pd.Timedelta(days=daysB - 1)
 
-        sAp, eAp, gAp = _filter_period(sends, events, signups, prevA_start, prevA_end, a_set, a_mode)
-        sBp, eBp, gBp = _filter_period(sends, events, signups, prevB_start, prevB_end, b_set, b_mode)
-
         try:
-            mAp = compute_campaign_metrics(sAp, eAp, gAp)
+            mAp = _cached_period_metrics_by_fp(
+                str(fp), events_db, sends_db, campaigns_db, str(prevA_start), str(prevA_end), a_key, a_mode
+            )
         except Exception:
             mAp = pd.DataFrame()
         try:
-            mBp = compute_campaign_metrics(sBp, eBp, gBp)
+            mBp = _cached_period_metrics_by_fp(
+                str(fp), events_db, sends_db, campaigns_db, str(prevB_start), str(prevB_end), b_key, b_mode
+            )
         except Exception:
             mBp = pd.DataFrame()
 
-        aggAp = _aggregate_metrics(mAp, eAp, sAp) if not mAp.empty else {
+        aggAp = _aggregate_metrics(mAp, None, None) if not mAp.empty else {
             "N_sends": 0.0, "N_opens": 0.0, "N_clicks": 0.0, "N_signups": 0.0, "N_unsubscribes": 0.0,
             "open_rate": 0.0, "ctr": 0.0, "signup_rate": 0.0, "unsubscribe_rate": 0.0
         }
-        aggBp = _aggregate_metrics(mBp, eBp, sBp) if not mBp.empty else {
+        aggBp = _aggregate_metrics(mBp, None, None) if not mBp.empty else {
             "N_sends": 0.0, "N_opens": 0.0, "N_clicks": 0.0, "N_signups": 0.0, "N_unsubscribes": 0.0,
             "open_rate": 0.0, "ctr": 0.0, "signup_rate": 0.0, "unsubscribe_rate": 0.0
         }
