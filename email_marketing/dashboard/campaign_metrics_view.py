@@ -16,6 +16,15 @@ from analytics.db import load_all_data
 from analytics.metrics import compute_campaign_metrics
 
 
+@st.cache_data(show_spinner=False)
+def _cached_load_all_data(events_db: str, sends_db: str, campaigns_db: str):
+    return load_all_data(events_db, sends_db, campaigns_db)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_compute_metrics(sends: pd.DataFrame, events: pd.DataFrame, signups: pd.DataFrame):
+    return compute_campaign_metrics(sends, events, signups)
+
 def _as_utc(x) -> pd.Timestamp:
     """Parse any datetime-like into a UTC-aware Timestamp (NaT si no válido)."""
     ts = pd.to_datetime(x, errors="coerce", utc=True)
@@ -89,7 +98,10 @@ def render_campaign_metrics_view() -> None:
     events_db, sends_db, campaigns_db = _default_db_paths()
 
     try:
-        events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+        #events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+        events, sends, campaigns, signups = _cached_load_all_data(
+                events_db, sends_db, campaigns_db
+            )
     except Exception as exc:  # pragma: no cover - defensive
         st.error(f"Failed to load data: {exc}")
         return
@@ -433,7 +445,8 @@ def render_campaign_metrics_view() -> None:
     # ======================= MODE 2: Compare campaigns =======================
     if view_mode == "Compare campaigns":
         try:
-            metrics_df = compute_campaign_metrics(sends, events, signups)
+            #metrics_df = compute_campaign_metrics(sends, events, signups)
+            metrics_df = _cached_compute_metrics(sends, events, signups)
         except Exception as exc:
             st.error(f"Failed to compute metrics: {exc}")
             return
