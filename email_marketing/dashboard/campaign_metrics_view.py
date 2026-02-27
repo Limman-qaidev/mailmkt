@@ -93,6 +93,17 @@ def _campaign_filter_tuple(campaign_filter: Iterable[str] | None) -> tuple[str, 
     return tuple(sorted({str(x) for x in campaign_filter if str(x).strip()}))
 
 
+def _normalize_period_bounds(
+    start: pd.Timestamp | str, end: pd.Timestamp | str
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Normalize period bounds to full-day inclusive timestamps."""
+    s = pd.to_datetime(start)
+    e = pd.to_datetime(end)
+    s = s.normalize()
+    e = e.normalize() + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+    return s, e
+
+
 def _campaign_mask(df: pd.DataFrame, campaigns: set[str]) -> pd.Series:
     if not campaigns:
         return pd.Series(True, index=df.index)
@@ -162,6 +173,7 @@ def _load_period_frames(
     campaign_filter: tuple[str, ...],
     filter_mode: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    start, end = _normalize_period_bounds(start, end)
     if os.getenv("NEON_URL", "").strip():
         try:
             e_raw, s_raw, _c_raw, g_raw = load_period_data(
@@ -195,8 +207,7 @@ def _cached_period_metrics_by_fp(
     campaign_filter: tuple[str, ...],
     filter_mode: str,
 ) -> pd.DataFrame:
-    start = pd.to_datetime(start_iso)
-    end = pd.to_datetime(end_iso)
+    start, end = _normalize_period_bounds(start_iso, end_iso)
     s, e, g = _load_period_frames(fp, events_db, sends_db, campaigns_db, start, end, campaign_filter, filter_mode)
     return compute_campaign_metrics(s, e, g)
 
@@ -212,8 +223,7 @@ def _cached_period_daily_by_fp(
     campaign_filter: tuple[str, ...],
     filter_mode: str,
 ) -> pd.DataFrame:
-    start = pd.to_datetime(start_iso)
-    end = pd.to_datetime(end_iso)
+    start, end = _normalize_period_bounds(start_iso, end_iso)
     _s, e, g = _load_period_frames(fp, events_db, sends_db, campaigns_db, start, end, campaign_filter, filter_mode)
     return _daily_series_from_frames(e, g)
 
@@ -800,10 +810,11 @@ def render_campaign_metrics_view() -> None:
             return
         aggA = _aggregate_metrics(mA, None, None)
 
-        # Previous equal-length period for A
-        period_days = max(1, (a_end.normalize() - a_start.normalize()).days + 1)
-        prev_end = a_start - pd.Timedelta(seconds=1)
-        prev_start = prev_end - pd.Timedelta(days=period_days - 1)
+        # Previous equal-length period for A (full-day windows)
+        a_start_ts, a_end_ts = _normalize_period_bounds(a_start, a_end)
+        period_days = max(1, (a_end_ts.normalize() - a_start_ts.normalize()).days + 1)
+        prev_start = a_start_ts - pd.Timedelta(days=period_days)
+        prev_end = a_start_ts - pd.Timedelta(nanoseconds=1)
 
         try:
             mP = _cached_period_metrics_by_fp(
@@ -902,14 +913,16 @@ def render_campaign_metrics_view() -> None:
         aggA = _aggregate_metrics(mA, None, None)
         aggB = _aggregate_metrics(mB, None, None)
 
-        # Previous equal-length periods for A and B
-        daysA = max(1, (a_end.normalize() - a_start.normalize()).days + 1)
-        prevA_end = a_start - pd.Timedelta(seconds=1)
-        prevA_start = prevA_end - pd.Timedelta(days=daysA - 1)
+        # Previous equal-length periods for A and B (full-day windows)
+        a_start_ts, a_end_ts = _normalize_period_bounds(a_start, a_end)
+        daysA = max(1, (a_end_ts.normalize() - a_start_ts.normalize()).days + 1)
+        prevA_start = a_start_ts - pd.Timedelta(days=daysA)
+        prevA_end = a_start_ts - pd.Timedelta(nanoseconds=1)
 
-        daysB = max(1, (b_end.normalize() - b_start.normalize()).days + 1)
-        prevB_end = b_start - pd.Timedelta(seconds=1)
-        prevB_start = prevB_end - pd.Timedelta(days=daysB - 1)
+        b_start_ts, b_end_ts = _normalize_period_bounds(b_start, b_end)
+        daysB = max(1, (b_end_ts.normalize() - b_start_ts.normalize()).days + 1)
+        prevB_start = b_start_ts - pd.Timedelta(days=daysB)
+        prevB_end = b_start_ts - pd.Timedelta(nanoseconds=1)
 
         try:
             mAp = _cached_period_metrics_by_fp(
