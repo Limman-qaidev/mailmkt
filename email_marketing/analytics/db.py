@@ -17,8 +17,9 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -144,7 +145,11 @@ def load_user_signups(path: Optional[Path] = None) -> pd.DataFrame:
 
 
 # ---------------------- Postgres (Neon) helpers ----------------------
-def _pg_table_exists(engine: Engine, table: str) -> bool:
+@lru_cache(maxsize=64)
+def _pg_table_exists_cached(table: str) -> bool:
+    engine = _get_engine()
+    if engine is None:
+        return False
     q = text("""
         SELECT 1
         FROM information_schema.tables
@@ -154,6 +159,11 @@ def _pg_table_exists(engine: Engine, table: str) -> bool:
     with engine.connect() as con:
         res = con.execute(q, {"t": table}).first()
         return res is not None
+
+
+def _pg_table_exists(engine: Engine, table: str) -> bool:
+    _ = engine
+    return _pg_table_exists_cached(table)
 
 
 def _read_events_pg(engine: Engine) -> pd.DataFrame:
@@ -213,35 +223,140 @@ def _read_signups_pg(engine: Engine) -> pd.DataFrame:
     )
 
 
-# ---------------------- Orchestrator ----------------------
-def load_all_data(
-    events_db: str, sends_db: str, campaigns_db: str
+def _normalise_campaign_filter(campaign_filter: Optional[Iterable[str]]) -> list[str]:
+    if not campaign_filter:
+        return []
+    out: list[str] = []
+    for v in campaign_filter:
+        s = str(v).strip()
+        if s:
+            out.append(s)
+    return sorted(set(out))
+
+
+def _sql_in_predicate(column: str, values: list[object], mode: str, prefix: str) -> tuple[str, dict]:
+    if not values:
+        return "", {}
+    params: dict[str, object] = {}
+    marks: list[str] = []
+    for i, v in enumerate(values):
+        key = f"{prefix}_{i}"
+        params[key] = v
+        marks.append(f":{key}")
+    op = "IN" if mode == "include" else "NOT IN"
+    return f" AND {column} {op} ({', '.join(marks)})", params
+
+
+def _apply_campaign_filter(df: pd.DataFrame, campaigns: list[str], mode: str) -> pd.DataFrame:
+    if not campaigns or df.empty:
+        return df
+    if "campaign" in df.columns:
+        mask = df["campaign"].astype(str).isin(campaigns)
+        return df.loc[mask] if mode == "include" else df.loc[~mask]
+    return df
+
+
+def _read_events_pg_period(
+    engine: Engine,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    campaign_filter: list[str],
+    filter_mode: str,
+) -> pd.DataFrame:
+    q = """
+        SELECT msg_id, event_type, client_ip, ts, campaign
+        FROM events
+        WHERE ts >= :start_ts AND ts <= :end_ts
+    """
+    params: dict[str, object] = {"start_ts": start, "end_ts": end}
+    pred, pred_params = _sql_in_predicate("campaign", campaign_filter, filter_mode, "evc")
+    q += pred
+    params.update(pred_params)
+    return pd.read_sql_query(text(q), con=engine, params=params)
+
+
+def _read_sends_pg_period(
+    engine: Engine,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    campaign_filter: list[str],
+    campaign_ids: list[object],
+    filter_mode: str,
+) -> pd.DataFrame:
+    if _pg_table_exists(engine, "send_log"):
+        q = """
+            SELECT campaign_id, msg_id, email, send_ts
+            FROM send_log
+            WHERE send_ts >= :start_ts AND send_ts <= :end_ts
+        """
+        params: dict[str, object] = {"start_ts": start, "end_ts": end}
+        pred, pred_params = _sql_in_predicate("campaign_id", campaign_ids, filter_mode, "snd")
+        q += pred
+        params.update(pred_params)
+        return pd.read_sql_query(text(q), con=engine, params=params)
+
+    if _pg_table_exists(engine, "email_map"):
+        cols = pd.read_sql_query(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='email_map'
+            """,
+            con=engine,
+        )["column_name"].tolist()
+        select_cols = ["msg_id", "recipient AS email"]
+        if "variant" in cols:
+            select_cols.append("variant")
+        if "send_ts" in cols:
+            select_cols.append("send_ts")
+        if "campaign" in cols:
+            select_cols.append("campaign")
+
+        q = "SELECT " + ", ".join(select_cols) + " FROM email_map"
+        params: dict[str, object] = {}
+        where_parts: list[str] = []
+        if "send_ts" in cols:
+            where_parts.append("send_ts >= :start_ts AND send_ts <= :end_ts")
+            params["start_ts"] = start
+            params["end_ts"] = end
+        if "campaign" in cols and campaign_filter:
+            pred, pred_params = _sql_in_predicate("campaign", campaign_filter, filter_mode, "emc")
+            where_parts.append(pred.replace(" AND ", "", 1))
+            params.update(pred_params)
+        if where_parts:
+            q += " WHERE " + " AND ".join(where_parts)
+        return pd.read_sql_query(text(q), con=engine, params=params if params else None)
+
+    return pd.DataFrame()
+
+
+def _read_signups_pg_period(
+    engine: Engine,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    campaign_ids: list[object],
+    filter_mode: str,
+) -> pd.DataFrame:
+    if not _pg_table_exists(engine, "user_signup"):
+        return pd.DataFrame(columns=["signup_id", "campaign_id", "client_name", "email", "signup_ts"])
+
+    q = """
+        SELECT signup_id, campaign_id, client_name, email, signup_ts
+        FROM user_signup
+        WHERE signup_ts >= :start_ts AND signup_ts <= :end_ts
+    """
+    params: dict[str, object] = {"start_ts": start, "end_ts": end}
+    pred, pred_params = _sql_in_predicate("campaign_id", campaign_ids, filter_mode, "suc")
+    q += pred
+    params.update(pred_params)
+    return pd.read_sql_query(text(q), con=engine, params=params)
+
+
+def _harmonize_loaded_data(
+    events: pd.DataFrame,
+    sends: pd.DataFrame,
+    campaigns: pd.DataFrame,
+    signups: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load and harmonize data from either Neon (if NEON_URL) or local SQLite."""
-
-    if _use_neon():
-        engine = _get_engine()
-        if engine is None:
-            raise RuntimeError("NEON_URL is set but SQLAlchemy engine could not be created.")
-
-        # --- Read raw tables from Postgres
-        events = _read_events_pg(engine)
-        sends = _read_sends_pg(engine)
-        campaigns = _read_campaigns_pg(engine)
-        signups = _read_signups_pg(engine)
-
-    else:
-        # --- SQLite (legacy/local)
-        for path_str in (events_db, sends_db, campaigns_db):
-            if not Path(path_str).exists():
-                raise FileNotFoundError(f"Database not found: {path_str}")
-
-        events = _read_events_sqlite(events_db)
-        sends = load_send_log(Path(sends_db))
-        campaigns = _safe_read_query(Path(campaigns_db), "SELECT * FROM campaigns")
-        signups = _safe_read_query(Path(campaigns_db), "SELECT * FROM user_signup")
-
-    # ---------------- Harmonize columns ----------------
     # events: ensure event_ts present
     if "event_ts" not in events.columns and "ts" in events.columns:
         events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
@@ -270,3 +385,96 @@ def load_all_data(
         sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
 
     return events, sends, campaigns, signups
+
+
+def load_period_data(
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    campaign_filter: Optional[Iterable[str]] = None,
+    filter_mode: str = "exclude",
+    events_db: str = str(EVENTS_DB),
+    sends_db: str = str(MAP_DB),
+    campaigns_db: str = str(CAMPAIGNS_DB),
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load period-filtered data (pushdown on Neon; local filter on SQLite)."""
+    start = pd.to_datetime(start, errors="coerce")
+    end = pd.to_datetime(end, errors="coerce")
+    if getattr(start, "tzinfo", None) is not None:
+        start = start.tz_convert(None)
+    if getattr(end, "tzinfo", None) is not None:
+        end = end.tz_convert(None)
+    filter_mode = "include" if filter_mode == "include" else "exclude"
+    campaigns_selected = _normalise_campaign_filter(campaign_filter)
+
+    if _use_neon():
+        engine = _get_engine()
+        if engine is None:
+            raise RuntimeError("NEON_URL is set but SQLAlchemy engine could not be created.")
+
+        campaigns = _read_campaigns_pg(engine)
+        campaign_ids: list[object] = []
+        if campaigns_selected and not campaigns.empty and {"campaign_id", "name"}.issubset(campaigns.columns):
+            m = campaigns.copy()
+            m["name"] = m["name"].astype(str)
+            campaign_ids = (
+                m.loc[m["name"].isin(campaigns_selected), "campaign_id"]
+                .dropna()
+                .drop_duplicates()
+                .tolist()
+            )
+
+        events = _read_events_pg_period(engine, start, end, campaigns_selected, filter_mode)
+        sends = _read_sends_pg_period(engine, start, end, campaigns_selected, campaign_ids, filter_mode)
+        signups = _read_signups_pg_period(engine, start, end, campaign_ids, filter_mode)
+        events, sends, campaigns, signups = _harmonize_loaded_data(events, sends, campaigns, signups)
+
+        # Final guard on campaign names for parity with UI filters
+        if campaigns_selected:
+            events = _apply_campaign_filter(events, campaigns_selected, filter_mode)
+            signups = _apply_campaign_filter(signups, campaigns_selected, filter_mode)
+            sends = _apply_campaign_filter(sends, campaigns_selected, filter_mode)
+        return events, sends, campaigns, signups
+
+    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+    if "event_ts" in events.columns:
+        events = events.loc[(events["event_ts"] >= start) & (events["event_ts"] <= end)]
+    if "send_ts" in sends.columns:
+        sends = sends.loc[(sends["send_ts"] >= start) & (sends["send_ts"] <= end)]
+    if "signup_ts" in signups.columns:
+        signups = signups.loc[(signups["signup_ts"] >= start) & (signups["signup_ts"] <= end)]
+    if campaigns_selected:
+        events = _apply_campaign_filter(events, campaigns_selected, filter_mode)
+        sends = _apply_campaign_filter(sends, campaigns_selected, filter_mode)
+        signups = _apply_campaign_filter(signups, campaigns_selected, filter_mode)
+    return events, sends, campaigns, signups
+
+
+# ---------------------- Orchestrator ----------------------
+def load_all_data(
+    events_db: str, sends_db: str, campaigns_db: str
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load and harmonize data from either Neon (if NEON_URL) or local SQLite."""
+
+    if _use_neon():
+        engine = _get_engine()
+        if engine is None:
+            raise RuntimeError("NEON_URL is set but SQLAlchemy engine could not be created.")
+
+        # --- Read raw tables from Postgres
+        events = _read_events_pg(engine)
+        sends = _read_sends_pg(engine)
+        campaigns = _read_campaigns_pg(engine)
+        signups = _read_signups_pg(engine)
+
+    else:
+        # --- SQLite (legacy/local)
+        for path_str in (events_db, sends_db, campaigns_db):
+            if not Path(path_str).exists():
+                raise FileNotFoundError(f"Database not found: {path_str}")
+
+        events = _read_events_sqlite(events_db)
+        sends = load_send_log(Path(sends_db))
+        campaigns = _safe_read_query(Path(campaigns_db), "SELECT * FROM campaigns")
+        signups = _safe_read_query(Path(campaigns_db), "SELECT * FROM user_signup")
+
+    return _harmonize_loaded_data(events, sends, campaigns, signups)

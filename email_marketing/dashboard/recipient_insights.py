@@ -16,9 +16,6 @@ from email_marketing.analytics.user_metrics import (
     compute_eb_rates,
 )
 
-import sqlite3
-
-
 def _extract_topic_from_text(text: str) -> str:
     """Heuristic topic parser from campaign/subject text."""
     if not isinstance(text, str):
@@ -457,18 +454,6 @@ def _topic_email_rollup(ev_t: pd.DataFrame, sd_t: pd.DataFrame, signups_t: pd.Da
     return out[["topic", "topic_norm", "email", "S", "O", "C", "U", "Q", "Y", "owner", "last_open_ts"]]
 
 
-@st.cache_data(show_spinner=False)
-def load_table(db_path: str, query: str) -> pd.DataFrame:
-    """Load a table/query from SQLite and return a DataFrame (cached)."""
-    with sqlite3.connect(db_path) as con:
-        return pd.read_sql_query(query, con)
-
-@st.cache_data(show_spinner=False)
-def compute_metrics_cached(events: pd.DataFrame, email_map: pd.DataFrame) -> pd.DataFrame:
-    """Compute campaign metrics (cached). Keep this pure/deterministic."""
-    # ... your existing computations ...
-    return metrics_df
-
 def _db_fingerprint(paths: Tuple[str, str, str]) -> str:
     """
     Build a stable fingerprint for cache invalidation based on file mtime + size.
@@ -484,15 +469,7 @@ def _db_fingerprint(paths: Tuple[str, str, str]) -> str:
     return "|".join(parts)
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _cached_load_all_data_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
-    """
-    Cached DB load. 'fp' is used only as a cache key.
-    """
-    return load_all_data(events_db, sends_db, campaigns_db)
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_resource(show_spinner=False)
 def _cached_customer360_bundle_by_fp(
     fp: str, events_db: str, sends_db: str, campaigns_db: str
 ):
@@ -523,8 +500,7 @@ def _cached_customer360_bundle_by_fp(
 
     # Global user aggregates (Recipient Detail tab)
     users_df = build_user_aggregates(events_prepared, sends, signups)
-    """if not users_df.empty:
-        users_df = compute_eb_rates(users_df)"""
+    users_df = compute_eb_rates(users_df) if not users_df.empty else users_df
 
     return (
         events_prepared,
@@ -541,29 +517,6 @@ def _cached_customer360_bundle_by_fp(
         topic_totals,
         topic_email_rollup,
     )
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def _cached_customer360_artifacts(fp: str, events_db: str, sends_db: str, campaigns_db: str):
-    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
-
-    for df_ in (events, sends, signups):
-        if "campaign" in df_.columns:
-            df_["campaign"] = df_["campaign"].astype(str)
-
-    events_prepared = _prepare_events_with_email(events, sends)
-    camp2topic = _build_campaign_topic_map(campaigns)
-    ev_t, sd_t = _prepare_ev_sd_with_topics(events_prepared, sends, campaigns)
-    corpus = _topic_corpus(ev_t, sd_t, signups, campaigns)
-    owners_mi = _owners_series(ev_t, signups, campaigns)
-    signups_t = _prepare_signups_with_topics(signups, camp2topic)
-    topic_totals = _topic_level_totals(ev_t, sd_t, signups_t)
-    topic_email_rollup = _topic_email_rollup(ev_t, sd_t, signups_t)
-
-    users_df = build_user_aggregates(events_prepared, sends, signups)
-    users_df = compute_eb_rates(users_df) if not users_df.empty else users_df
-
-    return corpus, owners_mi, users_df, camp2topic, signups_t, topic_totals, topic_email_rollup
 
 
     # ---------------------- Small helpers ----------------------
@@ -764,7 +717,6 @@ def render_recipient_insights() -> None:
     if users_df.empty:
         st.info("No recipient data available.")
         return
-    users_df = compute_eb_rates(users_df)
 
     # --- persistent audience state (for Campaign Planning) ---
     st.session_state.setdefault("aud_built", False)

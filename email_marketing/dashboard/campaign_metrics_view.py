@@ -13,11 +13,8 @@ import plotly.graph_objects as go
 from datetime import datetime
 from typing import Tuple, Union, Iterable
 
-from analytics.db import load_all_data
+from analytics.db import load_all_data, load_period_data
 from analytics.metrics import compute_campaign_metrics
-
-import sqlite3
-
 
 def _db_fingerprint(path_or_paths: Union[str, Path, Iterable[Union[str, Path]]]):
     """
@@ -35,59 +32,27 @@ def _db_fingerprint(path_or_paths: Union[str, Path, Iterable[Union[str, Path]]])
 
     return tuple(_one(p) for p in path_or_paths)
 
-@st.cache_data(show_spinner=False)
-def load_table(db_path: str, query: str) -> pd.DataFrame:
-    """Load a table/query from SQLite and return a DataFrame (cached)."""
-    with sqlite3.connect(db_path) as con:
-        return pd.read_sql_query(query, con)
+def _harmonize_campaign_frames(
+    events: pd.DataFrame, sends: pd.DataFrame, signups: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Normalize key columns/timestamps and align sends.campaign from events."""
+    events = events.copy()
+    sends = sends.copy()
+    signups = signups.copy()
 
-@st.cache_data(show_spinner=False)
-def compute_metrics_cached(events: pd.DataFrame, email_map: pd.DataFrame) -> pd.DataFrame:
-    """Compute campaign metrics (cached). Keep this pure/deterministic."""
-    # ... your existing computations ...
-    return metrics_df
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def _cached_load_all_data_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
-    # fp is intentionally unused except as a cache key
-    return load_all_data(events_db, sends_db, campaigns_db)
-
-@st.cache_data(show_spinner=False)
-def _cached_load_all_data(events_db: str, sends_db: str, campaigns_db: str):
-    return load_all_data(events_db, sends_db, campaigns_db)
-
-
-@st.cache_data(show_spinner=False)
-def _cached_compute_metrics(sends: pd.DataFrame, events: pd.DataFrame, signups: pd.DataFrame):
-    return compute_campaign_metrics(sends, events, signups)
-
-@st.cache_data(show_spinner=False, ttl=300)
-def _cached_campaign_bundle_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
-    """
-    Carga + harmoniza + parsea timestamps + calcula metrics en un solo caché.
-    fp solo se usa como cache-key.
-    """
-    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
-
-    # --- Harmonize keys / types ---
     for df in (events, sends, signups):
         if "campaign" in df.columns:
             df["campaign"] = df["campaign"].astype(str)
 
-    # msg_id -> campaign from events (para corregir sends)
+    msg2camp = pd.Series(dtype="object")
     if "campaign" in events.columns and "msg_id" in events.columns and not events.empty:
         msg2camp = (
             events.loc[events["campaign"].notna(), ["msg_id", "campaign"]]
             .drop_duplicates("msg_id")
             .set_index("msg_id")["campaign"]
         )
-    else:
-        msg2camp = pd.Series(dtype="object")
 
-    # Preserve variant; rewrite sends.campaign using events map when available
     if "campaign" in sends.columns:
-        sends = sends.copy()
         sends["variant"] = sends["campaign"]
 
     if "msg_id" in sends.columns and not msg2camp.empty:
@@ -97,7 +62,6 @@ def _cached_campaign_bundle_by_fp(fp: str, events_db: str, sends_db: str, campai
         else:
             sends["campaign"] = mapped
 
-    # Ensure timestamps
     if "send_ts" in sends.columns:
         sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
     if "event_ts" in events.columns:
@@ -107,49 +71,35 @@ def _cached_campaign_bundle_by_fp(fp: str, events_db: str, sends_db: str, campai
     if "signup_ts" in signups.columns:
         signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
 
+    return events, sends, signups
+
+@st.cache_resource(show_spinner=False)
+def _campaign_bundle_resource_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    """Heavy in-memory cache for base campaign bundle keyed by fingerprint."""
+    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+    events, sends, signups = _harmonize_campaign_frames(events, sends, signups)
     metrics_df = compute_campaign_metrics(sends, events, signups)
     return events, sends, campaigns, signups, metrics_df
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _cached_compute_metrics_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
-    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
 
-    # Minimal harmonization here (must match your later logic)
-    for df in (events, sends, signups):
-        if "campaign" in df.columns:
-            df["campaign"] = df["campaign"].astype(str)
-
-    # If you rely on msg_id->campaign mapping, do it here once
-    msg2camp = (
-        events.loc[events["campaign"].notna(), ["msg_id", "campaign"]]
-        .drop_duplicates("msg_id")
-        .set_index("msg_id")["campaign"]
-    )
-    mapped = sends["msg_id"].map(msg2camp)
-    if "campaign" in sends.columns:
-        sends["variant"] = sends["campaign"]
-        sends["campaign"] = mapped.combine_first(sends["campaign"])
-    else:
-        sends["campaign"] = mapped
-
-    # Timestamps
-    if "send_ts" in sends.columns:
-        sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
-    if "event_ts" in events.columns:
-        events["event_ts"] = pd.to_datetime(events["event_ts"], errors="coerce")
-    elif "ts" in events.columns:
-        events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
-    if "signup_ts" in signups.columns:
-        signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
-
-    metrics_df = compute_campaign_metrics(sends, events, signups)
-    return metrics_df, campaigns
+def _cached_campaign_bundle_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    """Compatibility wrapper used by existing view logic."""
+    return _campaign_bundle_resource_by_fp(fp, events_db, sends_db, campaigns_db)
 
 
 def _campaign_filter_tuple(campaign_filter: Iterable[str] | None) -> tuple[str, ...]:
     if not campaign_filter:
         return tuple()
     return tuple(sorted({str(x) for x in campaign_filter if str(x).strip()}))
+
+
+def _campaign_mask(df: pd.DataFrame, campaigns: set[str]) -> pd.Series:
+    if not campaigns:
+        return pd.Series(True, index=df.index)
+    for col in ("campaign", "campaign_id"):
+        if col in df.columns:
+            return df[col].astype(str).isin(campaigns)
+    return pd.Series(False, index=df.index)
 
 
 def _filter_period_frames(
@@ -174,14 +124,17 @@ def _filter_period_frames(
 
     camps = set(campaign_filter or ())
     if camps:
+        s_mask = _campaign_mask(s, camps)
+        e_mask = _campaign_mask(e, camps)
+        g_mask = _campaign_mask(g, camps)
         if filter_mode == "include":
-            s = s.loc[s["campaign"].isin(camps)]
-            e = e.loc[e["campaign"].isin(camps)]
-            g = g.loc[g["campaign"].isin(camps)]
+            s = s.loc[s_mask]
+            e = e.loc[e_mask]
+            g = g.loc[g_mask]
         else:
-            s = s.loc[~s["campaign"].isin(camps)]
-            e = e.loc[~e["campaign"].isin(camps)]
-            g = g.loc[~g["campaign"].isin(camps)]
+            s = s.loc[~s_mask]
+            e = e.loc[~e_mask]
+            g = g.loc[~g_mask]
     return s, e, g
 
 
@@ -199,7 +152,39 @@ def _daily_series_from_frames(e: pd.DataFrame, g: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index().sort_values("date")
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+def _load_period_frames(
+    fp: str,
+    events_db: str,
+    sends_db: str,
+    campaigns_db: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    campaign_filter: tuple[str, ...],
+    filter_mode: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if os.getenv("NEON_URL", "").strip():
+        try:
+            e_raw, s_raw, _c_raw, g_raw = load_period_data(
+                start=start,
+                end=end,
+                campaign_filter=campaign_filter,
+                filter_mode=filter_mode,
+                events_db=events_db,
+                sends_db=sends_db,
+                campaigns_db=campaigns_db,
+            )
+            e_raw, s_raw, g_raw = _harmonize_campaign_frames(e_raw, s_raw, g_raw)
+            return s_raw, e_raw, g_raw
+        except Exception:
+            pass
+
+    events, sends, _campaigns, signups, _metrics = _cached_campaign_bundle_by_fp(
+        fp, events_db, sends_db, campaigns_db
+    )
+    return _filter_period_frames(sends, events, signups, start, end, campaign_filter, filter_mode)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
 def _cached_period_metrics_by_fp(
     fp: str,
     events_db: str,
@@ -210,16 +195,13 @@ def _cached_period_metrics_by_fp(
     campaign_filter: tuple[str, ...],
     filter_mode: str,
 ) -> pd.DataFrame:
-    events, sends, _campaigns, signups, _metrics = _cached_campaign_bundle_by_fp(
-        fp, events_db, sends_db, campaigns_db
-    )
     start = pd.to_datetime(start_iso)
     end = pd.to_datetime(end_iso)
-    s, e, g = _filter_period_frames(sends, events, signups, start, end, campaign_filter, filter_mode)
+    s, e, g = _load_period_frames(fp, events_db, sends_db, campaigns_db, start, end, campaign_filter, filter_mode)
     return compute_campaign_metrics(s, e, g)
 
 
-@st.cache_data(show_spinner=False, ttl=300)
+@st.cache_data(show_spinner=False, ttl=3600)
 def _cached_period_daily_by_fp(
     fp: str,
     events_db: str,
@@ -230,16 +212,71 @@ def _cached_period_daily_by_fp(
     campaign_filter: tuple[str, ...],
     filter_mode: str,
 ) -> pd.DataFrame:
+    start = pd.to_datetime(start_iso)
+    end = pd.to_datetime(end_iso)
+    _s, e, g = _load_period_frames(fp, events_db, sends_db, campaigns_db, start, end, campaign_filter, filter_mode)
+    return _daily_series_from_frames(e, g)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_normalized_daily_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str) -> pd.DataFrame:
     events, sends, _campaigns, signups, _metrics = _cached_campaign_bundle_by_fp(
         fp, events_db, sends_db, campaigns_db
     )
-    start = pd.to_datetime(start_iso)
-    end = pd.to_datetime(end_iso)
-    _s, e, g = _filter_period_frames(sends, events, signups, start, end, campaign_filter, filter_mode)
-    return _daily_series_from_frames(e, g)
+
+    rows: list[pd.DataFrame] = []
+    campaign_values: set[str] = set()
+    for df in (events, sends, signups):
+        if "campaign" in df.columns:
+            vals = df["campaign"].dropna().astype(str).str.strip()
+            campaign_values.update(v for v in vals if v)
+
+    for cid in sorted(campaign_values):
+        ev = events.loc[events.get("campaign", pd.Series(index=events.index, dtype="object")) == cid].copy()
+        su = signups.loc[signups.get("campaign", pd.Series(index=signups.index, dtype="object")) == cid].copy()
+
+        base_ts = pd.NaT
+        if "campaign" in sends.columns and "send_ts" in sends.columns:
+            s_all = sends.loc[sends["campaign"] == cid, "send_ts"]
+            if not s_all.empty:
+                base_ts = s_all.min()
+        if pd.isna(base_ts):
+            candidates: list[pd.Timestamp] = []
+            if not ev.empty and "event_ts" in ev.columns:
+                candidates.append(ev["event_ts"].min())
+            if not su.empty and "signup_ts" in su.columns:
+                candidates.append(pd.to_datetime(su["signup_ts"], errors="coerce").min())
+            candidates = [c for c in candidates if pd.notna(c)]
+            if candidates:
+                base_ts = min(candidates)
+        if pd.isna(base_ts):
+            continue
+
+        if not ev.empty and "event_ts" in ev.columns and "event_type" in ev.columns:
+            ev = ev.loc[pd.notna(ev["event_ts"]), ["event_ts", "event_type"]].copy()
+            ev["event_type"] = ev["event_type"].astype(str).str.lower()
+            ev["days_since"] = (ev["event_ts"] - base_ts).dt.days
+            grp = ev.groupby(["days_since", "event_type"]).size().reset_index(name="count")
+            grp["campaign_id"] = cid
+            rows.append(grp)
+
+        if not su.empty and "signup_ts" in su.columns:
+            su2 = su.copy()
+            su2["signup_ts"] = pd.to_datetime(su2["signup_ts"], errors="coerce")
+            su2 = su2.loc[pd.notna(su2["signup_ts"]), ["signup_ts"]]
+            if not su2.empty:
+                su2["days_since"] = (su2["signup_ts"] - base_ts).dt.days
+                grp_su = su2.groupby("days_since").size().reset_index(name="count")
+                grp_su["event_type"] = "signup"
+                grp_su["campaign_id"] = cid
+                rows.append(grp_su[["days_since", "event_type", "count", "campaign_id"]])
+
+    if not rows:
+        return pd.DataFrame(columns=["days_since", "event_type", "count", "campaign_id"])
+    return pd.concat(rows, ignore_index=True)
 
 def _as_utc(x) -> pd.Timestamp:
-    """Parse any datetime-like into a UTC-aware Timestamp (NaT si no válido)."""
+    """Parse any datetime-like into a UTC-aware Timestamp (NaT if invalid)."""
     ts = pd.to_datetime(x, errors="coerce", utc=True)
     return ts
 
@@ -406,19 +443,19 @@ def render_campaign_metrics_view() -> None:
     def _pct_change(cur: float, prev: float) -> str:
         try:
             if prev is None or prev <= 0:
-                return "—"
+                return "-"
             return f"{(cur - prev) / prev:+.1%}"
         except Exception:
-            return "—"
+            return "-"
 
     def _pp_change(cur_rate: float, prev_rate: float) -> str:
         """Delta en puntos porcentuales (pp)."""
         try:
             if prev_rate is None:
-                return "—"
+                return "-"
             return f"{(cur_rate - prev_rate) * 100:+.1f} pp"
         except Exception:
-            return "—"
+            return "-"
 
     # -------------- View selector --------------
     view_mode = st.sidebar.radio(
@@ -495,10 +532,10 @@ def render_campaign_metrics_view() -> None:
                 budget = f"${info.get('budget', 0):,.0f}"
 
                 k1, k2, k3, k4 = st.columns([2, 1, 1, 1])
-                k1.metric("📣 Campaign", info["name"])
-                k2.metric("📅 Start Date", start.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(start) else "—")
-                k3.metric("📅 End Date", end.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(end) else "—")
-                k4.metric("💰 Budget", budget)
+                k1.metric("Campaign", info["name"])
+                k2.metric("Start Date", start.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(start) else "-")
+                k3.metric("End Date", end.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(end) else "-")
+                k4.metric("Budget", budget)
 
                 if pd.notna(start) and pd.notna(end) and end > start:
                     total_days = (end - start).days
@@ -646,12 +683,12 @@ def render_campaign_metrics_view() -> None:
                     end = _as_utc(row.get("end_date"))
                     budget_str = f"${(row.get('budget') or 0):,.0f}"
 
-                    st.markdown(f"### 📣 {name}")
+                    st.markdown(f"### {name}")
                     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
                     c1.metric("Campaign", name)
-                    c2.metric("Start Date", start.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(start) else "—")
-                    c3.metric("End Date",   end.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(end) else "—")
-                    c4.metric("💰 Budget",  budget_str)
+                    c2.metric("Start Date", start.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(start) else "-")
+                    c3.metric("End Date",   end.tz_convert("UTC").strftime("%Y-%m-%d") if pd.notna(end) else "-")
+                    c4.metric("Budget",  budget_str)
 
                     now_utc = pd.Timestamp.now(tz="UTC")
                     if pd.notna(start) and pd.notna(end) and end > start:
@@ -678,83 +715,43 @@ def render_campaign_metrics_view() -> None:
             st.plotly_chart(fig_cmp, use_container_width=True)
 
             # Normalized daily engagement since launch (include signups)
-            df_events = events.copy()
-            if "event_ts" not in df_events.columns and "ts" in df_events.columns:
-                df_events["event_ts"] = pd.to_datetime(df_events["ts"], errors="coerce")
-            else:
-                df_events["event_ts"] = pd.to_datetime(df_events["event_ts"], errors="coerce")
+            daily_long = _cached_normalized_daily_by_fp(str(fp), events_db, sends_db, campaigns_db)
+            if not daily_long.empty:
+                ts_long = daily_long[daily_long["campaign_id"].astype(str).isin(campaign_ids)].copy()
+                if not ts_long.empty:
+                    ts_df = (
+                        ts_long.pivot_table(
+                            index=["campaign_id", "days_since"],
+                            columns="event_type",
+                            values="count",
+                            aggfunc="sum",
+                            fill_value=0,
+                        )
+                        .reset_index()
+                    )
+                    ts_df.columns.name = None
 
-            df_sends = sends.copy()
-            if "send_ts" in df_sends.columns:
-                df_sends["send_ts"] = pd.to_datetime(df_sends["send_ts"], errors="coerce")
+                    event_map = {
+                        "open_rate": "open",
+                        "ctr": "click",
+                        "signup_rate": "signup",
+                        "unsubscribe_rate": "unsubscribe",
+                    }
+                    event_col = event_map.get(metric, "open")
 
-            df = df_events.merge(df_sends, on="msg_id", how="left", suffixes=("", "_send"))
+                    if event_col not in ts_df.columns:
+                        ts_df[event_col] = 0
 
-            df_list = []
-            for cid in campaign_ids:
-                ev = df[df["campaign"] == cid].copy()
-
-                # Append signups as pseudo-events for this campaign
-                su = pd.DataFrame()
-                if not signups.empty and "campaign" in signups.columns:
-                    su = signups[signups["campaign"] == cid].copy()
-                    if not su.empty:
-                        su["event_ts"] = pd.to_datetime(su.get("signup_ts"), errors="coerce")
-                        su = su.loc[:, ["event_ts"]]
-                        su["event_type"] = "signup"
-                        ev = pd.concat([ev, su], ignore_index=True, sort=False)
-
-                # Baseline: first send_ts for the campaign; fallback to earliest event_ts
-                base_ts = pd.NaT
-                if "campaign" in df_sends.columns and "send_ts" in df_sends.columns:
-                    s_all = df_sends.loc[df_sends["campaign"] == cid, "send_ts"]
-                    if not s_all.empty:
-                        base_ts = s_all.min()
-                if pd.isna(base_ts) and "event_ts" in ev.columns:
-                    base_ts = ev["event_ts"].min()
-
-                if pd.isna(base_ts):
-                    continue  # nothing to plot for this campaign
-
-                ev = ev[pd.notna(ev["event_ts"])].copy()
-                ev["days_since"] = (ev["event_ts"] - base_ts).dt.days
-
-                daily = (
-                    ev.groupby(["days_since", "event_type"])
-                    .size()
-                    .reset_index(name="count")
-                    .pivot(index="days_since", columns="event_type", values="count")
-                    .fillna(0)
-                    .reset_index()
-                )
-                daily["campaign_id"] = cid
-                df_list.append(daily)
-
-            if df_list:
-                ts_df = pd.concat(df_list, ignore_index=True).fillna(0)
-
-                event_map = {
-                    "open_rate": "open",
-                    "ctr": "click",
-                    "signup_rate": "signup",
-                    "unsubscribe_rate": "unsubscribe",
-                }
-                event_col = event_map.get(metric, "open")
-
-                # If the chosen metric column is missing (e.g., no signups), add zeros to avoid crash
-                if event_col not in ts_df.columns:
-                    ts_df[event_col] = 0
-
-                st.subheader("Normalized Daily Engagement")
-                fig_ts_cmp = px.line(
-                    ts_df,
-                    x="days_since",
-                    y=event_col,
-                    color="campaign_id",
-                    labels={"days_since": "Days Since Launch", event_col: "Count"},
-                    title=f"{metric.replace('_', ' ').title()} Over Time by Campaign",
-                )
-                st.plotly_chart(fig_ts_cmp, use_container_width=True)
+                    st.subheader("Normalized Daily Engagement")
+                    fig_ts_cmp = px.line(
+                        ts_df,
+                        x="days_since",
+                        y=event_col,
+                        color="campaign_id",
+                        labels={"days_since": "Days Since Launch", event_col: "Count"},
+                        title=f"{metric.replace('_', ' ').title()} Over Time by Campaign",
+                    )
+                    st.plotly_chart(fig_ts_cmp, use_container_width=True)
 
         return  # end Compare campaigns
 
@@ -821,18 +818,18 @@ def render_campaign_metrics_view() -> None:
 
         top_left, top_right = st.columns([3, 1])
         with top_left:
-            st.subheader(f"Aggregate KPIs ({a_start.date()} → {a_end.date()})")
-            st.caption(f"Previous period: {prev_start.date()} → {prev_end.date()}")
+            st.subheader(f"Aggregate KPIs ({a_start.date()} -> {a_end.date()})")
+            st.caption(f"Previous period: {prev_start.date()} -> {prev_end.date()}")
         with top_right:
             if hasattr(st, "popover"):
-                with st.popover("ℹ️ KPI deltas"):
+                with st.popover("KPI deltas info"):
                     st.write(
                         "- The percentage next to each KPI compares **this period** vs the **previous equal-length period**.\n"
-                        "- Counts show relative change: (A − Prev) / Prev.\n"
-                        "- Green ↑ means improvement; for **Unsubs** lower is better (inverse coloring)."
+                        "- Counts show relative change: (A - Prev) / Prev.\n"
+                        "- Green up means improvement; for **Unsubs** lower is better (inverse coloring)."
                     )
             else:
-                st.caption("ℹ️ Deltas compare to previous equal-length period. Counts show relative change; Unsubs use inverse coloring.")
+                st.caption("Info: deltas compare to previous equal-length period. Counts show relative change; Unsubs use inverse coloring.")
 
         # Row 1: Counts with delta %
         k1, k2, k3, k4, k5 = st.columns(5)
@@ -862,7 +859,7 @@ def render_campaign_metrics_view() -> None:
                 x="date",
                 y=[c for c in ["opens", "clicks", "signups"] if c in dailyA.columns],
                 labels={"value": "Count", "date": "Date"},
-                title=f"Daily Opens/Clicks/Signups ({a_start.date()} → {a_end.date()})",
+                title=f"Daily Opens/Clicks/Signups ({a_start.date()} -> {a_end.date()})",
             )
             st.plotly_chart(figA, use_container_width=True)
 
@@ -938,21 +935,21 @@ def render_campaign_metrics_view() -> None:
 
         # Help
         if hasattr(st, "popover"):
-            with st.popover("ℹ️ KPI deltas"):
+            with st.popover("KPI deltas info"):
                 st.write(
                     "- Each period's KPI delta compares against its **own previous equal-length period**.\n"
-                    "- Counts show relative change: (Period − Previous) / Previous.\n"
+                    "- Counts show relative change: (Period - Previous) / Previous.\n"
                     "- For **Unsubs**, lower is better (inverse coloring)."
                 )
         else:
-            st.caption("ℹ️ Deltas compare each period with its own previous equal-length period; Unsubs use inverse coloring.")
+            st.caption("Info: deltas compare each period with its own previous equal-length period; Unsubs use inverse coloring.")
 
         # KPI comparison: counts (row 1) + rates (row 2)
         st.subheader("Aggregate KPIs")
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown(f"**Period A**  \n{a_start.date()} → {a_end.date()}")
-            st.caption(f"Prev: {prevA_start.date()} → {prevA_end.date()}")
+            st.markdown(f"**Period A**  \n{a_start.date()} -> {a_end.date()}")
+            st.caption(f"Prev: {prevA_start.date()} -> {prevA_end.date()}")
             a1, a2, a3, a4, a5 = st.columns(5)
             a1.metric("Sent", f"{int(aggA['N_sends']):,}", delta=_pct_change(aggA["N_sends"], aggAp["N_sends"]))
             a2.metric("Opened", f"{int(aggA['N_opens']):,}", delta=_pct_change(aggA["N_opens"], aggAp["N_opens"]))
@@ -966,8 +963,8 @@ def render_campaign_metrics_view() -> None:
             ar4.metric("Unsubs rate", f"{aggA['unsubscribe_rate']:.1%}", delta=_pp_change(aggA["unsubscribe_rate"], aggAp["unsubscribe_rate"]), delta_color="inverse")
 
         with c2:
-            st.markdown(f"**Period B**  \n{b_start.date()} → {b_end.date()}")
-            st.caption(f"Prev: {prevB_start.date()} → {prevB_end.date()}")
+            st.markdown(f"**Period B**  \n{b_start.date()} -> {b_end.date()}")
+            st.caption(f"Prev: {prevB_start.date()} -> {prevB_end.date()}")
             b1, b2, b3, b4, b5 = st.columns(5)
             b1.metric("Sent", f"{int(aggB['N_sends']):,}", delta=_pct_change(aggB["N_sends"], aggBp["N_sends"]))
             b2.metric("Opened", f"{int(aggB['N_opens']):,}", delta=_pct_change(aggB["N_opens"], aggBp["N_opens"]))
@@ -1031,3 +1028,4 @@ def render_campaign_metrics_view() -> None:
 
 if __name__ == "__main__":  # pragma: no cover - manual execution
     render_campaign_metrics_view()
+
