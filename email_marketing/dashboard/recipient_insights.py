@@ -6,6 +6,7 @@ from typing import List, Tuple
 
 import pandas as pd
 import numpy as np
+import polars as pl
 import streamlit as st
 import re
 import os
@@ -329,129 +330,195 @@ def _prepare_signups_with_topics(signups_df: pd.DataFrame, camp2topic: dict[str,
 
 def _topic_level_totals(ev_t: pd.DataFrame, sd_t: pd.DataFrame, signups_t: pd.DataFrame) -> pd.DataFrame:
     """Build per-topic totals used by Campaign Planning priors."""
-    base = pd.DataFrame(index=pd.Index([], name="topic_norm"))
-    topic_label = pd.Series(dtype="object", name="topic")
+    topic_labels: list[pl.DataFrame] = []
+    keys: list[pl.DataFrame] = []
+    s_tot = pl.DataFrame(schema={"topic_norm": pl.Utf8, "S_tot": pl.Float64})
+    o_tot = pl.DataFrame(schema={"topic_norm": pl.Utf8, "O_tot": pl.Float64})
+    c_tot = pl.DataFrame(schema={"topic_norm": pl.Utf8, "C_tot": pl.Float64})
+    y_ev_tot = pl.DataFrame(schema={"topic_norm": pl.Utf8, "Y_ev_tot": pl.Float64})
+    y_tab_tot = pl.DataFrame(schema={"topic_norm": pl.Utf8, "Y_tab_tot": pl.Float64})
 
     if sd_t is not None and not sd_t.empty and {"topic", "msg_id"}.issubset(sd_t.columns):
-        sd = sd_t.copy()
-        sd["topic"] = sd["topic"].astype(str).str.strip()
-        sd = sd[sd["topic"] != ""]
-        if not sd.empty:
-            sd["topic_norm"] = sd["topic"].str.lower()
-            topic_label = sd.drop_duplicates("topic_norm").set_index("topic_norm")["topic"]
-            base = base.join(sd.groupby("topic_norm")["msg_id"].nunique().rename("S_tot"), how="outer")
+        sd = pl.from_pandas(sd_t, include_index=False).with_columns(
+            [
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().alias("topic"),
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("topic_norm"),
+            ]
+        ).filter(pl.col("topic") != "")
+        if not sd.is_empty():
+            keys.append(sd.select("topic_norm"))
+            topic_labels.append(sd.group_by("topic_norm").agg(pl.col("topic").first().alias("topic")))
+            s_tot = sd.group_by("topic_norm").agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("S_tot"))
 
     if ev_t is not None and not ev_t.empty and {"topic", "event_type", "msg_id"}.issubset(ev_t.columns):
-        ev = ev_t.copy()
-        ev["topic"] = ev["topic"].astype(str).str.strip()
-        ev = ev[ev["topic"] != ""]
-        if not ev.empty:
-            ev["topic_norm"] = ev["topic"].str.lower()
-            if topic_label.empty:
-                topic_label = ev.drop_duplicates("topic_norm").set_index("topic_norm")["topic"]
-            et = ev["event_type"].astype(str).str.lower()
-            base = base.join(
-                ev[et.eq("open")].groupby("topic_norm")["msg_id"].nunique().rename("O_tot"),
-                how="outer",
-            ).join(
-                ev[et.eq("click")].groupby("topic_norm")["msg_id"].nunique().rename("C_tot"),
-                how="outer",
-            ).join(
-                ev[et.eq("signup")].groupby("topic_norm")["msg_id"].nunique().rename("Y_ev_tot"),
-                how="outer",
-            )
+        ev = pl.from_pandas(ev_t, include_index=False).with_columns(
+            [
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().alias("topic"),
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("topic_norm"),
+                pl.col("event_type").cast(pl.Utf8).str.to_lowercase().alias("event_type"),
+            ]
+        ).filter(pl.col("topic") != "")
+        if not ev.is_empty():
+            keys.append(ev.select("topic_norm"))
+            topic_labels.append(ev.group_by("topic_norm").agg(pl.col("topic").first().alias("topic")))
+            o_tot = ev.filter(pl.col("event_type") == "open").group_by("topic_norm").agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("O_tot"))
+            c_tot = ev.filter(pl.col("event_type") == "click").group_by("topic_norm").agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("C_tot"))
+            y_ev_tot = ev.filter(pl.col("event_type") == "signup").group_by("topic_norm").agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("Y_ev_tot"))
 
     if signups_t is not None and not signups_t.empty and "topic_norm" in signups_t.columns:
-        id_col = "signup_id" if "signup_id" in signups_t.columns else None
-        if id_col:
-            y_tab = signups_t.groupby("topic_norm")[id_col].nunique().rename("Y_tab_tot")
-        else:
-            y_tab = signups_t.groupby("topic_norm").size().rename("Y_tab_tot")
-        base = base.join(y_tab, how="outer")
-        if topic_label.empty and "topic" in signups_t.columns:
-            topic_label = signups_t.drop_duplicates("topic_norm").set_index("topic_norm")["topic"]
+        sg = pl.from_pandas(signups_t, include_index=False).with_columns(
+            [
+                pl.col("topic_norm").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("topic_norm"),
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().alias("topic") if "topic" in signups_t.columns else pl.lit(None).cast(pl.Utf8).alias("topic"),
+            ]
+        ).filter(pl.col("topic_norm") != "")
+        if not sg.is_empty():
+            keys.append(sg.select("topic_norm"))
+            if "topic" in sg.columns:
+                topic_labels.append(sg.group_by("topic_norm").agg(pl.col("topic").first().alias("topic")))
+            if "signup_id" in sg.columns:
+                y_tab_tot = sg.group_by("topic_norm").agg(pl.col("signup_id").n_unique().cast(pl.Float64).alias("Y_tab_tot"))
+            else:
+                y_tab_tot = sg.group_by("topic_norm").len().rename({"len": "Y_tab_tot"}).with_columns(pl.col("Y_tab_tot").cast(pl.Float64))
 
-    if base.empty:
+    if not keys:
         return pd.DataFrame(columns=["topic", "topic_norm", "S_tot", "O_tot", "C_tot", "Y_ev_tot", "Y_tab_tot"])
 
-    out = base.fillna(0.0).reset_index()
-    out["topic"] = out["topic_norm"].map(topic_label).fillna(out["topic_norm"])
-    cols = ["topic", "topic_norm", "S_tot", "O_tot", "C_tot", "Y_ev_tot", "Y_tab_tot"]
-    for c in cols[2:]:
-        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
-    return out[cols]
+    base = pl.concat(keys, how="vertical_relaxed").unique()
+    labels = (
+        pl.concat(topic_labels, how="vertical_relaxed")
+        .group_by("topic_norm")
+        .agg(pl.col("topic").drop_nulls().first().alias("topic"))
+        if topic_labels
+        else pl.DataFrame(schema={"topic_norm": pl.Utf8, "topic": pl.Utf8})
+    )
+
+    out = (
+        base.join(s_tot, on="topic_norm", how="left")
+        .join(o_tot, on="topic_norm", how="left")
+        .join(c_tot, on="topic_norm", how="left")
+        .join(y_ev_tot, on="topic_norm", how="left")
+        .join(y_tab_tot, on="topic_norm", how="left")
+        .join(labels, on="topic_norm", how="left")
+        .with_columns(
+            [
+                pl.col("topic").fill_null(pl.col("topic_norm")),
+                pl.col("S_tot").fill_null(0.0),
+                pl.col("O_tot").fill_null(0.0),
+                pl.col("C_tot").fill_null(0.0),
+                pl.col("Y_ev_tot").fill_null(0.0),
+                pl.col("Y_tab_tot").fill_null(0.0),
+            ]
+        )
+    )
+    return out.select(["topic", "topic_norm", "S_tot", "O_tot", "C_tot", "Y_ev_tot", "Y_tab_tot"]).to_pandas()
 
 
 def _topic_email_rollup(ev_t: pd.DataFrame, sd_t: pd.DataFrame, signups_t: pd.DataFrame) -> pd.DataFrame:
     """Pre-aggregate per (topic,email): S,O,C,U,Q,Y,owner,last_open_ts."""
-    idx = pd.MultiIndex.from_tuples([], names=["topic_norm", "email"])
-    base = pd.DataFrame(index=idx)
-    topic_label = pd.Series(dtype="object", name="topic")
+    keys: list[pl.DataFrame] = []
+    topic_labels: list[pl.DataFrame] = []
+    s_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "S": pl.Float64})
+    o_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "O": pl.Float64})
+    c_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "C": pl.Float64})
+    u_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "U": pl.Float64})
+    q_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "Q": pl.Float64})
+    y_ev_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "Y_ev": pl.Float64})
+    y_tab_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "Y_tab": pl.Float64})
+    last_open_df = pl.DataFrame(schema={"topic_norm": pl.Utf8, "email": pl.Utf8, "last_open_ts": pl.Datetime})
 
     if sd_t is not None and not sd_t.empty and {"topic", "email", "msg_id"}.issubset(sd_t.columns):
-        sd = sd_t.copy()
-        sd["topic"] = sd["topic"].astype(str).str.strip()
-        sd["email"] = sd["email"].astype(str).str.strip().str.lower()
-        sd = sd[(sd["topic"] != "") & (sd["email"] != "")]
-        if not sd.empty:
-            sd["topic_norm"] = sd["topic"].str.lower()
-            topic_label = sd.drop_duplicates("topic_norm").set_index("topic_norm")["topic"]
-            sends_u = sd.groupby(["topic_norm", "email"])["msg_id"].nunique().rename("S")
-            base = base.join(sends_u, how="outer")
+        sd = pl.from_pandas(sd_t, include_index=False).with_columns(
+            [
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().alias("topic"),
+                pl.col("email").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("email"),
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("topic_norm"),
+            ]
+        ).filter((pl.col("topic") != "") & (pl.col("email") != ""))
+        if not sd.is_empty():
+            keys.append(sd.select(["topic_norm", "email"]))
+            topic_labels.append(sd.group_by("topic_norm").agg(pl.col("topic").first().alias("topic")))
+            s_df = sd.group_by(["topic_norm", "email"]).agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("S"))
 
     if ev_t is not None and not ev_t.empty and {"topic", "email", "event_type", "msg_id"}.issubset(ev_t.columns):
-        ev = ev_t.copy()
-        ev["topic"] = ev["topic"].astype(str).str.strip()
-        ev["email"] = ev["email"].astype(str).str.strip().str.lower()
-        ev = ev[(ev["topic"] != "") & (ev["email"] != "")]
-        if not ev.empty:
-            ev["topic_norm"] = ev["topic"].str.lower()
-            if topic_label.empty:
-                topic_label = ev.drop_duplicates("topic_norm").set_index("topic_norm")["topic"]
-            et = ev["event_type"].astype(str).str.lower()
-            key = ["topic_norm", "email"]
-            base = base.join(
-                ev[et.eq("open")].groupby(key)["msg_id"].nunique().rename("O"),
-                how="outer",
-            ).join(
-                ev[et.eq("click")].groupby(key)["msg_id"].nunique().rename("C"),
-                how="outer",
-            ).join(
-                ev[et.eq("unsubscribe")].groupby(key)["msg_id"].nunique().rename("U"),
-                how="outer",
-            ).join(
-                ev[et.eq("complaint")].groupby(key)["msg_id"].nunique().rename("Q"),
-                how="outer",
-            ).join(
-                ev[et.eq("signup")].groupby(key)["msg_id"].nunique().rename("Y_ev"),
-                how="outer",
-            )
+        ev = pl.from_pandas(ev_t, include_index=False).with_columns(
+            [
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().alias("topic"),
+                pl.col("email").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("email"),
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("topic_norm"),
+                pl.col("event_type").cast(pl.Utf8).str.to_lowercase().alias("event_type"),
+            ]
+        ).filter((pl.col("topic") != "") & (pl.col("email") != ""))
+        if not ev.is_empty():
+            keys.append(ev.select(["topic_norm", "email"]))
+            topic_labels.append(ev.group_by("topic_norm").agg(pl.col("topic").first().alias("topic")))
+            o_df = ev.filter(pl.col("event_type") == "open").group_by(["topic_norm", "email"]).agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("O"))
+            c_df = ev.filter(pl.col("event_type") == "click").group_by(["topic_norm", "email"]).agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("C"))
+            u_df = ev.filter(pl.col("event_type") == "unsubscribe").group_by(["topic_norm", "email"]).agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("U"))
+            q_df = ev.filter(pl.col("event_type") == "complaint").group_by(["topic_norm", "email"]).agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("Q"))
+            y_ev_df = ev.filter(pl.col("event_type") == "signup").group_by(["topic_norm", "email"]).agg(pl.col("msg_id").n_unique().cast(pl.Float64).alias("Y_ev"))
             if "event_ts" in ev.columns:
-                last_open = ev[et.eq("open")].groupby(key)["event_ts"].max().rename("last_open_ts")
-                base = base.join(last_open, how="left")
+                last_open_df = ev.filter(pl.col("event_type") == "open").group_by(["topic_norm", "email"]).agg(pl.col("event_ts").max().alias("last_open_ts"))
 
     if signups_t is not None and not signups_t.empty and {"topic_norm", "email"}.issubset(signups_t.columns):
-        id_col = "signup_id" if "signup_id" in signups_t.columns else None
-        if id_col:
-            y_tab = signups_t.groupby(["topic_norm", "email"])[id_col].nunique().rename("Y_tab")
-        else:
-            y_tab = signups_t.groupby(["topic_norm", "email"]).size().rename("Y_tab")
-        base = base.join(y_tab, how="outer")
-        if topic_label.empty and "topic" in signups_t.columns:
-            topic_label = signups_t.drop_duplicates("topic_norm").set_index("topic_norm")["topic"]
+        sg = pl.from_pandas(signups_t, include_index=False).with_columns(
+            [
+                pl.col("topic_norm").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("topic_norm"),
+                pl.col("email").cast(pl.Utf8).str.strip_chars().str.to_lowercase().alias("email"),
+                pl.col("topic").cast(pl.Utf8).str.strip_chars().alias("topic") if "topic" in signups_t.columns else pl.lit(None).cast(pl.Utf8).alias("topic"),
+            ]
+        ).filter((pl.col("topic_norm") != "") & (pl.col("email") != ""))
+        if not sg.is_empty():
+            keys.append(sg.select(["topic_norm", "email"]))
+            if "topic" in sg.columns:
+                topic_labels.append(sg.group_by("topic_norm").agg(pl.col("topic").first().alias("topic")))
+            if "signup_id" in sg.columns:
+                y_tab_df = sg.group_by(["topic_norm", "email"]).agg(pl.col("signup_id").n_unique().cast(pl.Float64).alias("Y_tab"))
+            else:
+                y_tab_df = sg.group_by(["topic_norm", "email"]).len().rename({"len": "Y_tab"}).with_columns(pl.col("Y_tab").cast(pl.Float64))
 
-    if base.empty:
+    if not keys:
         return pd.DataFrame(columns=["topic", "topic_norm", "email", "S", "O", "C", "U", "Q", "Y", "owner", "last_open_ts"])
 
-    out = base.fillna(0.0).reset_index()
-    for c in ("S", "O", "C", "U", "Q", "Y_ev", "Y_tab"):
-        if c not in out.columns:
-            out[c] = 0.0
-        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
-    out["Y"] = ((out["Y_ev"] > 0) | (out["Y_tab"] > 0)).astype(int)
-    out["owner"] = out["Y"].astype(bool)
-    out["topic"] = out["topic_norm"].map(topic_label).fillna(out["topic_norm"])
-    return out[["topic", "topic_norm", "email", "S", "O", "C", "U", "Q", "Y", "owner", "last_open_ts"]]
+    base = pl.concat(keys, how="vertical_relaxed").unique()
+    labels = (
+        pl.concat(topic_labels, how="vertical_relaxed")
+        .group_by("topic_norm")
+        .agg(pl.col("topic").drop_nulls().first().alias("topic"))
+        if topic_labels
+        else pl.DataFrame(schema={"topic_norm": pl.Utf8, "topic": pl.Utf8})
+    )
+
+    out = (
+        base.join(s_df, on=["topic_norm", "email"], how="left")
+        .join(o_df, on=["topic_norm", "email"], how="left")
+        .join(c_df, on=["topic_norm", "email"], how="left")
+        .join(u_df, on=["topic_norm", "email"], how="left")
+        .join(q_df, on=["topic_norm", "email"], how="left")
+        .join(y_ev_df, on=["topic_norm", "email"], how="left")
+        .join(y_tab_df, on=["topic_norm", "email"], how="left")
+        .join(last_open_df, on=["topic_norm", "email"], how="left")
+        .join(labels, on="topic_norm", how="left")
+        .with_columns(
+            [
+                pl.col("topic").fill_null(pl.col("topic_norm")),
+                pl.col("S").fill_null(0.0),
+                pl.col("O").fill_null(0.0),
+                pl.col("C").fill_null(0.0),
+                pl.col("U").fill_null(0.0),
+                pl.col("Q").fill_null(0.0),
+                pl.col("Y_ev").fill_null(0.0),
+                pl.col("Y_tab").fill_null(0.0),
+            ]
+        )
+        .with_columns(
+            [
+                ((pl.col("Y_ev") > 0) | (pl.col("Y_tab") > 0)).cast(pl.Int64).alias("Y"),
+                ((pl.col("Y_ev") > 0) | (pl.col("Y_tab") > 0)).alias("owner"),
+            ]
+        )
+    )
+    return out.select(["topic", "topic_norm", "email", "S", "O", "C", "U", "Q", "Y", "owner", "last_open_ts"]).to_pandas()
 
 
 def _db_fingerprint(paths: Tuple[str, str, str]) -> str:

@@ -1,54 +1,49 @@
 import sqlite3
-import pandas as pd
+
+import polars as pl
 
 
 def generate_segments(
-        events_db: str,
-        email_map_db: str,
-        campaigns_db: str
-        ) -> dict[str, list[str]]:
-    """
-    Connects to the three SQLite databases and returns a dict with three keys:
-    - "unsubscribed": list of recipient emails who ever unsubscribed
-    (event_type="unsubscribe")
-    - "interested": list of recipient emails who did not unsubscribe but have
-    at least one "open" or "click" event OR appear in user_signup (only those
-      signups whose email exists in email_map.recipient)
-    - "not_interested": everyone else
-    """
-    # 1. Load event_log and email_map, merge on msg_id
+    events_db: str,
+    email_map_db: str,
+    campaigns_db: str,
+) -> dict[str, list[str]]:
+    """Return unsubscribed/interested/not_interested recipient segments."""
     conn_ev = sqlite3.connect(events_db, detect_types=sqlite3.PARSE_DECLTYPES)
-    events = pd.read_sql("SELECT msg_id, event_type FROM event_log", conn_ev)
-    conn_ev.close()
+    conn_map = sqlite3.connect(email_map_db, detect_types=sqlite3.PARSE_DECLTYPES)
+    conn_c = sqlite3.connect(campaigns_db, detect_types=sqlite3.PARSE_DECLTYPES)
 
-    conn_map = sqlite3.connect(
-        email_map_db, detect_types=sqlite3.PARSE_DECLTYPES
-        )
-    email_map = pd.read_sql(
-        "SELECT msg_id, recipient FROM email_map",
-        conn_map
-        )
-    conn_map.close()
+    try:
+        events = pl.read_database("SELECT msg_id, event_type FROM event_log", conn_ev)
+        email_map = pl.read_database("SELECT msg_id, recipient FROM email_map", conn_map)
+        signups = pl.read_database("SELECT email FROM user_signup", conn_c)
+    finally:
+        conn_ev.close()
+        conn_map.close()
+        conn_c.close()
 
-    df = events.merge(email_map, on="msg_id", how="left")
+    if events.is_empty() or email_map.is_empty():
+        return {"unsubscribed": [], "interested": [], "not_interested": []}
 
-    # 2. Load user_signup, filter to those in email_map.recipient
-    conn_c = sqlite3.connect(
-        campaigns_db,
-        detect_types=sqlite3.PARSE_DECLTYPES
-        )
-    signups = pd.read_sql("SELECT email FROM user_signup", conn_c)
-    conn_c.close()
-    signups = signups[signups["email"].isin(email_map["recipient"])]
+    df = events.join(email_map, on="msg_id", how="left")
+    valid_recipients = email_map.select("recipient").drop_nulls().unique()
+    signups = signups.filter(pl.col("email").is_in(valid_recipients.get_column("recipient")))
 
-    # 3. Build segments
-    unsub = set(df[df["event_type"] == "unsubscribe"]["recipient"].dropna())
+    unsub = set(
+        df.filter(pl.col("event_type") == "unsubscribe")
+        .get_column("recipient")
+        .drop_nulls()
+        .to_list()
+    )
     engaged = set(
-        df[df["event_type"].isin(["open", "click"])]["recipient"].dropna()
-        )
-    signed = set(signups["email"])
+        df.filter(pl.col("event_type").is_in(["open", "click"]))
+        .get_column("recipient")
+        .drop_nulls()
+        .to_list()
+    )
+    signed = set(signups.get_column("email").drop_nulls().to_list()) if not signups.is_empty() else set()
     interested = (engaged | signed) - unsub
-    all_recipients = set(email_map["recipient"].dropna())
+    all_recipients = set(valid_recipients.get_column("recipient").to_list())
     not_interested = all_recipients - unsub - interested
 
     return {
@@ -62,7 +57,7 @@ if __name__ == "__main__":
     segments = generate_segments(
         "data/email_events.db",
         "data/email_map.db",
-        "data/campaigns.db"
-        )
+        "data/campaigns.db",
+    )
     for segment, emails in segments.items():
         print(f"{segment}: {len(emails)}")

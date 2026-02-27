@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
 import pandas as pd
+import polars as pl
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -251,8 +252,10 @@ def _apply_campaign_filter(df: pd.DataFrame, campaigns: list[str], mode: str) ->
     if not campaigns or df.empty:
         return df
     if "campaign" in df.columns:
-        mask = df["campaign"].astype(str).isin(campaigns)
-        return df.loc[mask] if mode == "include" else df.loc[~mask]
+        pl_df = pl.from_pandas(df, include_index=False)
+        mask_expr = pl.col("campaign").cast(pl.Utf8).is_in(campaigns)
+        out = pl_df.filter(mask_expr) if mode == "include" else pl_df.filter(~mask_expr)
+        return out.to_pandas()
     return df
 
 
@@ -359,32 +362,39 @@ def _harmonize_loaded_data(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     # events: ensure event_ts present
     if "event_ts" not in events.columns and "ts" in events.columns:
+        events = events.copy()
         events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
 
-    # sends: ensure email col
     if not sends.empty and "email" not in sends.columns and "recipient" in sends.columns:
         sends = sends.rename(columns={"recipient": "email"})
 
-    # attach email to events (via msg_id) if missing
-    if "email" not in events.columns and not sends.empty:
-        events = events.merge(sends[["msg_id", "email"]].drop_duplicates(), on="msg_id", how="left")
+    ev_pl = pl.from_pandas(events, include_index=False) if not events.empty else pl.DataFrame()
+    sd_pl = pl.from_pandas(sends, include_index=False) if not sends.empty else pl.DataFrame()
+    cp_pl = pl.from_pandas(campaigns, include_index=False) if not campaigns.empty else pl.DataFrame()
+    sg_pl = pl.from_pandas(signups, include_index=False) if not signups.empty else pl.DataFrame()
 
-    # reduce event columns to essentials
-    keep_cols = [c for c in ["campaign_id", "campaign", "msg_id", "event_type", "event_ts", "email"] if c in events.columns]
-    events = events[keep_cols]
+    if "email" not in ev_pl.columns and not sd_pl.is_empty() and {"msg_id", "email"}.issubset(set(sd_pl.columns)):
+        ev_pl = ev_pl.join(sd_pl.select(["msg_id", "email"]).unique(), on="msg_id", how="left")
 
-    # signups join campaigns for human-readable campaign name
-    if not campaigns.empty and "campaign_id" in campaigns.columns:
-        signups = signups.merge(campaigns, on="campaign_id", how="left")
-        signups = signups.rename(columns={"name": "campaign"})
+    if not ev_pl.is_empty():
+        keep_cols = [c for c in ["campaign_id", "campaign", "msg_id", "event_type", "event_ts", "email"] if c in ev_pl.columns]
+        ev_pl = ev_pl.select(keep_cols)
 
-    # parse timestamps
-    if "signup_ts" in signups.columns:
-        signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
-    if "send_ts" in sends.columns:
-        sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
+    if not sg_pl.is_empty() and not cp_pl.is_empty() and "campaign_id" in sg_pl.columns and "campaign_id" in cp_pl.columns:
+        sg_pl = sg_pl.join(cp_pl, on="campaign_id", how="left")
+        if "name" in sg_pl.columns:
+            sg_pl = sg_pl.rename({"name": "campaign"})
 
-    return events, sends, campaigns, signups
+    events_out = ev_pl.to_pandas() if not ev_pl.is_empty() else events
+    sends_out = sd_pl.to_pandas() if not sd_pl.is_empty() else sends
+    signups_out = sg_pl.to_pandas() if not sg_pl.is_empty() else signups
+
+    if "signup_ts" in signups_out.columns:
+        signups_out["signup_ts"] = pd.to_datetime(signups_out["signup_ts"], errors="coerce")
+    if "send_ts" in sends_out.columns:
+        sends_out["send_ts"] = pd.to_datetime(sends_out["send_ts"], errors="coerce")
+
+    return events_out, sends_out, campaigns, signups_out
 
 
 def load_period_data(
@@ -436,12 +446,21 @@ def load_period_data(
         return events, sends, campaigns, signups
 
     events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
-    if "event_ts" in events.columns:
-        events = events.loc[(events["event_ts"] >= start) & (events["event_ts"] <= end)]
-    if "send_ts" in sends.columns:
-        sends = sends.loc[(sends["send_ts"] >= start) & (sends["send_ts"] <= end)]
-    if "signup_ts" in signups.columns:
-        signups = signups.loc[(signups["signup_ts"] >= start) & (signups["signup_ts"] <= end)]
+    if "event_ts" in events.columns and not events.empty:
+        ev_pl = pl.from_pandas(events, include_index=False).filter(
+            (pl.col("event_ts") >= pl.lit(start)) & (pl.col("event_ts") <= pl.lit(end))
+        )
+        events = ev_pl.to_pandas()
+    if "send_ts" in sends.columns and not sends.empty:
+        sd_pl = pl.from_pandas(sends, include_index=False).filter(
+            (pl.col("send_ts") >= pl.lit(start)) & (pl.col("send_ts") <= pl.lit(end))
+        )
+        sends = sd_pl.to_pandas()
+    if "signup_ts" in signups.columns and not signups.empty:
+        sg_pl = pl.from_pandas(signups, include_index=False).filter(
+            (pl.col("signup_ts") >= pl.lit(start)) & (pl.col("signup_ts") <= pl.lit(end))
+        )
+        signups = sg_pl.to_pandas()
     if campaigns_selected:
         events = _apply_campaign_filter(events, campaigns_selected, filter_mode)
         sends = _apply_campaign_filter(sends, campaigns_selected, filter_mode)

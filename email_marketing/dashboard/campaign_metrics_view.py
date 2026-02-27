@@ -6,6 +6,7 @@ from pathlib import Path
 
 import os
 import pandas as pd
+import polars as pl
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -122,45 +123,74 @@ def _filter_period_frames(
     campaign_filter: tuple[str, ...] | set[str] | None,
     filter_mode: str = "exclude",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    s = sends_df
-    e = events_df
-    g = signups_df
+    camps = list(set(campaign_filter or ()))
 
-    if "send_ts" in s.columns:
-        s = s.loc[(s["send_ts"] >= start) & (s["send_ts"] <= end)]
-    if "event_ts" in e.columns:
-        e = e.loc[(e["event_ts"] >= start) & (e["event_ts"] <= end)]
-    if "signup_ts" in g.columns:
-        g = g.loc[(g["signup_ts"] >= start) & (g["signup_ts"] <= end)]
+    def _one(df: pd.DataFrame, ts_col: str) -> pd.DataFrame:
+        if df.empty:
+            return df
+        pl_df = pl.from_pandas(df, include_index=False)
+        if ts_col in pl_df.columns:
+            pl_df = pl_df.filter((pl.col(ts_col) >= pl.lit(start)) & (pl.col(ts_col) <= pl.lit(end)))
+        if camps:
+            camp_col = "campaign" if "campaign" in pl_df.columns else ("campaign_id" if "campaign_id" in pl_df.columns else None)
+            if camp_col:
+                mask = pl.col(camp_col).cast(pl.Utf8).is_in(camps)
+                pl_df = pl_df.filter(mask) if filter_mode == "include" else pl_df.filter(~mask)
+        return pl_df.to_pandas()
 
-    camps = set(campaign_filter or ())
-    if camps:
-        s_mask = _campaign_mask(s, camps)
-        e_mask = _campaign_mask(e, camps)
-        g_mask = _campaign_mask(g, camps)
-        if filter_mode == "include":
-            s = s.loc[s_mask]
-            e = e.loc[e_mask]
-            g = g.loc[g_mask]
-        else:
-            s = s.loc[~s_mask]
-            e = e.loc[~e_mask]
-            g = g.loc[~g_mask]
+    s = _one(sends_df, "send_ts")
+    e = _one(events_df, "event_ts")
+    g = _one(signups_df, "signup_ts")
     return s, e, g
 
 
 def _daily_series_from_frames(e: pd.DataFrame, g: pd.DataFrame) -> pd.DataFrame:
-    df = pd.DataFrame(index=pd.Index([], name="date"))
-    if not e.empty and "event_ts" in e.columns:
-        e2 = e.assign(date=e["event_ts"].dt.date)
-        opens = e2.query("event_type == 'open'").groupby("date")["msg_id"].nunique().rename("opens")
-        clicks = e2.query("event_type == 'click'").groupby("date")["msg_id"].nunique().rename("clicks")
-        df = pd.concat([opens, clicks], axis=1).fillna(0.0)
+    base = pl.DataFrame(schema={"date": pl.Date})
+
+    if not e.empty and {"event_ts", "event_type"}.issubset(e.columns):
+        ev = pl.from_pandas(e, include_index=False).filter(pl.col("event_ts").is_not_null())
+        ev = ev.with_columns(
+            [
+                pl.col("event_ts").cast(pl.Date).alias("date"),
+                pl.col("event_type").cast(pl.Utf8).str.to_lowercase().alias("event_type"),
+            ]
+        )
+        if "msg_id" in ev.columns:
+            opens = ev.filter(pl.col("event_type") == "open").group_by("date").agg(pl.col("msg_id").n_unique().alias("opens"))
+            clicks = ev.filter(pl.col("event_type") == "click").group_by("date").agg(pl.col("msg_id").n_unique().alias("clicks"))
+        else:
+            opens = ev.filter(pl.col("event_type") == "open").group_by("date").len().rename({"len": "opens"})
+            clicks = ev.filter(pl.col("event_type") == "click").group_by("date").len().rename({"len": "clicks"})
+        base = (
+            pl.concat([base, opens.select("date"), clicks.select("date")], how="vertical_relaxed")
+            .unique()
+            .join(opens, on="date", how="left")
+            .join(clicks, on="date", how="left")
+        )
+
     if not g.empty and "signup_ts" in g.columns:
-        g2 = g.assign(date=g["signup_ts"].dt.date)
-        signups = g2.groupby("date")["signup_id"].nunique().rename("signups")
-        df = pd.concat([df, signups], axis=1).fillna(0.0)
-    return df.reset_index().sort_values("date")
+        sg = pl.from_pandas(g, include_index=False).filter(pl.col("signup_ts").is_not_null())
+        sg = sg.with_columns(pl.col("signup_ts").cast(pl.Date).alias("date"))
+        if "signup_id" in sg.columns:
+            signups = sg.group_by("date").agg(pl.col("signup_id").n_unique().alias("signups"))
+        else:
+            signups = sg.group_by("date").len().rename({"len": "signups"})
+        base_dates = pl.concat([base.select("date"), signups.select("date")], how="vertical_relaxed").unique()
+        base = base_dates.join(base, on="date", how="left").join(signups, on="date", how="left")
+
+    if base.is_empty():
+        return pd.DataFrame(columns=["date", "opens", "clicks", "signups"])
+    for c in ("opens", "clicks", "signups"):
+        if c not in base.columns:
+            base = base.with_columns(pl.lit(0.0).alias(c))
+    out = base.with_columns(
+        [
+            pl.col("opens").fill_null(0.0),
+            pl.col("clicks").fill_null(0.0),
+            pl.col("signups").fill_null(0.0),
+        ]
+    ).select(["date", "opens", "clicks", "signups"]).sort("date")
+    return out.to_pandas()
 
 
 def _load_period_frames(
@@ -233,57 +263,90 @@ def _cached_normalized_daily_by_fp(fp: str, events_db: str, sends_db: str, campa
     events, sends, _campaigns, signups, _metrics = _cached_campaign_bundle_by_fp(
         fp, events_db, sends_db, campaigns_db
     )
+    if events.empty and sends.empty and signups.empty:
+        return pd.DataFrame(columns=["days_since", "event_type", "count", "campaign_id"])
 
-    rows: list[pd.DataFrame] = []
-    campaign_values: set[str] = set()
-    for df in (events, sends, signups):
-        if "campaign" in df.columns:
-            vals = df["campaign"].dropna().astype(str).str.strip()
-            campaign_values.update(v for v in vals if v)
+    ev = pl.from_pandas(events, include_index=False) if not events.empty else pl.DataFrame()
+    sd = pl.from_pandas(sends, include_index=False) if not sends.empty else pl.DataFrame()
+    su = pl.from_pandas(signups, include_index=False) if not signups.empty else pl.DataFrame()
 
-    for cid in sorted(campaign_values):
-        ev = events.loc[events.get("campaign", pd.Series(index=events.index, dtype="object")) == cid].copy()
-        su = signups.loc[signups.get("campaign", pd.Series(index=signups.index, dtype="object")) == cid].copy()
+    campaign_sources: list[pl.DataFrame] = []
+    for df in (ev, sd, su):
+        if "campaign" in df.columns and not df.is_empty():
+            campaign_sources.append(df.select(pl.col("campaign").cast(pl.Utf8).alias("campaign")).filter(pl.col("campaign").str.len_chars() > 0))
+    if not campaign_sources:
+        return pd.DataFrame(columns=["days_since", "event_type", "count", "campaign_id"])
 
-        base_ts = pd.NaT
-        if "campaign" in sends.columns and "send_ts" in sends.columns:
-            s_all = sends.loc[sends["campaign"] == cid, "send_ts"]
-            if not s_all.empty:
-                base_ts = s_all.min()
-        if pd.isna(base_ts):
-            candidates: list[pd.Timestamp] = []
-            if not ev.empty and "event_ts" in ev.columns:
-                candidates.append(ev["event_ts"].min())
-            if not su.empty and "signup_ts" in su.columns:
-                candidates.append(pd.to_datetime(su["signup_ts"], errors="coerce").min())
-            candidates = [c for c in candidates if pd.notna(c)]
-            if candidates:
-                base_ts = min(candidates)
-        if pd.isna(base_ts):
-            continue
+    campaigns = pl.concat(campaign_sources, how="vertical_relaxed").unique()
 
-        if not ev.empty and "event_ts" in ev.columns and "event_type" in ev.columns:
-            ev = ev.loc[pd.notna(ev["event_ts"]), ["event_ts", "event_type"]].copy()
-            ev["event_type"] = ev["event_type"].astype(str).str.lower()
-            ev["days_since"] = (ev["event_ts"] - base_ts).dt.days
-            grp = ev.groupby(["days_since", "event_type"]).size().reset_index(name="count")
-            grp["campaign_id"] = cid
-            rows.append(grp)
+    s_base = (
+        sd.filter(pl.col("campaign").is_not_null() & pl.col("send_ts").is_not_null())
+        .group_by("campaign")
+        .agg(pl.col("send_ts").min().alias("min_send_ts"))
+        if {"campaign", "send_ts"}.issubset(sd.columns)
+        else pl.DataFrame(schema={"campaign": pl.Utf8, "min_send_ts": pl.Datetime})
+    )
+    e_base = (
+        ev.filter(pl.col("campaign").is_not_null() & pl.col("event_ts").is_not_null())
+        .group_by("campaign")
+        .agg(pl.col("event_ts").min().alias("min_event_ts"))
+        if {"campaign", "event_ts"}.issubset(ev.columns)
+        else pl.DataFrame(schema={"campaign": pl.Utf8, "min_event_ts": pl.Datetime})
+    )
+    g_base = (
+        su.filter(pl.col("campaign").is_not_null() & pl.col("signup_ts").is_not_null())
+        .group_by("campaign")
+        .agg(pl.col("signup_ts").min().alias("min_signup_ts"))
+        if {"campaign", "signup_ts"}.issubset(su.columns)
+        else pl.DataFrame(schema={"campaign": pl.Utf8, "min_signup_ts": pl.Datetime})
+    )
 
-        if not su.empty and "signup_ts" in su.columns:
-            su2 = su.copy()
-            su2["signup_ts"] = pd.to_datetime(su2["signup_ts"], errors="coerce")
-            su2 = su2.loc[pd.notna(su2["signup_ts"]), ["signup_ts"]]
-            if not su2.empty:
-                su2["days_since"] = (su2["signup_ts"] - base_ts).dt.days
-                grp_su = su2.groupby("days_since").size().reset_index(name="count")
-                grp_su["event_type"] = "signup"
-                grp_su["campaign_id"] = cid
-                rows.append(grp_su[["days_since", "event_type", "count", "campaign_id"]])
+    base = campaigns.join(s_base, on="campaign", how="left").join(e_base, on="campaign", how="left").join(g_base, on="campaign", how="left")
+    base = base.with_columns(
+        [
+            pl.when(pl.col("min_send_ts").is_not_null())
+            .then(pl.col("min_send_ts"))
+            .otherwise(pl.min_horizontal(pl.col("min_event_ts"), pl.col("min_signup_ts")))
+            .alias("base_ts")
+        ]
+    ).filter(pl.col("base_ts").is_not_null())
+
+    rows: list[pl.DataFrame] = []
+    if {"campaign", "event_ts", "event_type"}.issubset(ev.columns) and not ev.is_empty():
+        ev_rows = (
+            ev.filter(pl.col("campaign").is_not_null() & pl.col("event_ts").is_not_null())
+            .with_columns(pl.col("event_type").cast(pl.Utf8).str.to_lowercase().alias("event_type"))
+            .join(base.select(["campaign", "base_ts"]), on="campaign", how="inner")
+            .with_columns(
+                ((pl.col("event_ts") - pl.col("base_ts")).dt.total_days().cast(pl.Int64)).alias("days_since")
+            )
+            .group_by(["days_since", "event_type", "campaign"])
+            .len()
+            .rename({"len": "count", "campaign": "campaign_id"})
+            .select(["days_since", "event_type", "count", "campaign_id"])
+        )
+        if not ev_rows.is_empty():
+            rows.append(ev_rows)
+
+    if {"campaign", "signup_ts"}.issubset(su.columns) and not su.is_empty():
+        su_rows = (
+            su.filter(pl.col("campaign").is_not_null() & pl.col("signup_ts").is_not_null())
+            .join(base.select(["campaign", "base_ts"]), on="campaign", how="inner")
+            .with_columns(
+                ((pl.col("signup_ts") - pl.col("base_ts")).dt.total_days().cast(pl.Int64)).alias("days_since"),
+                pl.lit("signup").alias("event_type"),
+            )
+            .group_by(["days_since", "event_type", "campaign"])
+            .len()
+            .rename({"len": "count", "campaign": "campaign_id"})
+            .select(["days_since", "event_type", "count", "campaign_id"])
+        )
+        if not su_rows.is_empty():
+            rows.append(su_rows)
 
     if not rows:
         return pd.DataFrame(columns=["days_since", "event_type", "count", "campaign_id"])
-    return pd.concat(rows, ignore_index=True)
+    return pl.concat(rows, how="vertical_relaxed").to_pandas()
 
 def _as_utc(x) -> pd.Timestamp:
     """Parse any datetime-like into a UTC-aware Timestamp (NaT if invalid)."""
