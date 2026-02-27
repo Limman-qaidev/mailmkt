@@ -148,7 +148,8 @@ def _daily_series_from_frames(e: pd.DataFrame, g: pd.DataFrame) -> pd.DataFrame:
     base = pl.DataFrame(schema={"date": pl.Date})
 
     if not e.empty and {"event_ts", "event_type"}.issubset(e.columns):
-        ev = pl.from_pandas(e, include_index=False).filter(pl.col("event_ts").is_not_null())
+        e_cols = [c for c in ("event_ts", "event_type", "msg_id") if c in e.columns]
+        ev = pl.from_pandas(e[e_cols], include_index=False).filter(pl.col("event_ts").is_not_null())
         ev = ev.with_columns(
             [
                 pl.col("event_ts").cast(pl.Date).alias("date"),
@@ -169,7 +170,8 @@ def _daily_series_from_frames(e: pd.DataFrame, g: pd.DataFrame) -> pd.DataFrame:
         )
 
     if not g.empty and "signup_ts" in g.columns:
-        sg = pl.from_pandas(g, include_index=False).filter(pl.col("signup_ts").is_not_null())
+        g_cols = [c for c in ("signup_ts", "signup_id") if c in g.columns]
+        sg = pl.from_pandas(g[g_cols], include_index=False).filter(pl.col("signup_ts").is_not_null())
         sg = sg.with_columns(pl.col("signup_ts").cast(pl.Date).alias("date"))
         if "signup_id" in sg.columns:
             signups = sg.group_by("date").agg(pl.col("signup_id").n_unique().alias("signups"))
@@ -255,6 +257,10 @@ def _cached_period_daily_by_fp(
 ) -> pd.DataFrame:
     start, end = _normalize_period_bounds(start_iso, end_iso)
     _s, e, g = _load_period_frames(fp, events_db, sends_db, campaigns_db, start, end, campaign_filter, filter_mode)
+    if not e.empty:
+        e = e[[c for c in ("event_ts", "event_type", "msg_id") if c in e.columns]].copy()
+    if not g.empty:
+        g = g[[c for c in ("signup_ts", "signup_id") if c in g.columns]].copy()
     return _daily_series_from_frames(e, g)
 
 
@@ -346,7 +352,12 @@ def _cached_normalized_daily_by_fp(fp: str, events_db: str, sends_db: str, campa
 
     if not rows:
         return pd.DataFrame(columns=["days_since", "event_type", "count", "campaign_id"])
-    return pl.concat(rows, how="vertical_relaxed").to_pandas()
+    return (
+        pl.concat(rows, how="vertical_relaxed")
+        .select(["days_since", "event_type", "count", "campaign_id"])
+        .sort(["campaign_id", "days_since", "event_type"])
+        .to_pandas()
+    )
 
 def _as_utc(x) -> pd.Timestamp:
     """Parse any datetime-like into a UTC-aware Timestamp (NaT if invalid)."""

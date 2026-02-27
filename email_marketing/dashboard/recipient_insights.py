@@ -87,6 +87,77 @@ def _build_campaign_topic_map(campaigns_df: pd.DataFrame) -> dict[str, str]:
     return out
 
 
+def _topic_lookup_from_unique_values(
+    series_list: list[pd.Series],
+    topic_map: dict[str, str],
+    invalid_tokens: set[str] | None = None,
+) -> dict[str, str]:
+    """Build topic lookup from unique raw values, inferring only unresolved keys once."""
+    invalid = invalid_tokens or {"", "nan", "none", "null"}
+    lookup: dict[str, str] = {}
+
+    # Seed lookup from explicit campaign->topic map (exact + lowercase).
+    for k, v in (topic_map or {}).items():
+        key = str(k).strip()
+        if not key or key.lower() in invalid:
+            continue
+        topic = "" if pd.isna(v) else str(v).strip()
+        if not topic or topic.lower() in invalid:
+            continue
+        lookup[key] = topic
+        lookup[key.lower()] = topic
+
+    # Infer only for unique unresolved values.
+    unique_values: set[str] = set()
+    for s in series_list:
+        if s is None:
+            continue
+        vals = (
+            pd.Series(s)
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .loc[lambda x: (~x.str.lower().isin(invalid)) & (x != "")]
+            .unique()
+            .tolist()
+        )
+        unique_values.update(vals)
+
+    for raw in unique_values:
+        if raw in lookup or raw.lower() in lookup:
+            continue
+        inferred = _extract_topic_from_text(raw)
+        topic = str(inferred).strip() if inferred is not None else ""
+        if topic and topic.lower() not in invalid:
+            lookup[raw] = topic
+            lookup[raw.lower()] = topic
+
+    return lookup
+
+
+def _map_topics_from_lookup(
+    df: pd.DataFrame,
+    topic_lookup: dict[str, str],
+    *,
+    source_cols: tuple[str, ...] = ("campaign", "campaign_id"),
+    invalid_tokens: set[str] | None = None,
+) -> pd.Series:
+    """Vectorized topic mapping using prebuilt lookup."""
+    invalid = invalid_tokens or {"", "nan", "none", "null"}
+    topic = pd.Series("", index=df.index, dtype="object")
+    for source_col in source_cols:
+        if source_col not in df.columns:
+            continue
+        raw_src = df[source_col]
+        raw = raw_src.astype("string").fillna("").str.strip()
+        raw_lower = raw.str.lower()
+        valid_raw = (raw != "") & ~raw_lower.isin(invalid)
+        mapped = raw_lower.map(topic_lookup).fillna("")
+        mapped = mapped.where(valid_raw, "")
+        topic = topic.where(topic.astype(str).str.strip() != "", mapped)
+    return topic.fillna("").astype(str).str.strip()
+
+
 def _prepare_ev_sd_with_topics(
     events_df: pd.DataFrame,
     sends_df: pd.DataFrame,
@@ -133,31 +204,20 @@ def _prepare_ev_sd_with_topics(
                 else:
                     sd["campaign"] = mapped_campaign
 
-    def _map_topic_from_cols(df: pd.DataFrame) -> pd.Series:
-        topic = pd.Series("", index=df.index, dtype="object")
-        for source_col in ("campaign", "campaign_id"):
-            if source_col not in df.columns:
-                continue
-            raw_src = df[source_col]
-            raw = raw_src.astype(str).str.strip()
-            mapped = raw.map(topic_map).fillna(raw.str.lower().map(topic_map))
-            inferred = raw.map(_extract_topic_from_text)
-            valid_raw = raw_src.notna() & ~raw.str.lower().isin(invalid_tokens)
-            mapped = mapped.where(valid_raw, "")
-            inferred = inferred.where(valid_raw, "")
-            mapped_txt = mapped.astype(str).str.strip().str.lower()
-            mapped_valid = mapped.notna() & ~mapped_txt.isin(invalid_tokens)
-            mapped = mapped.where(mapped_valid, inferred)
-            topic = topic.where(topic.astype(str).str.strip() != "", mapped)
-        return topic.fillna("")
+    lookup_series: list[pd.Series] = []
+    for df_ in (ev, sd):
+        for c in ("campaign", "campaign_id"):
+            if c in df_.columns:
+                lookup_series.append(df_[c])
+    topic_lookup = _topic_lookup_from_unique_values(lookup_series, topic_map, invalid_tokens)
 
     if not ev.empty:
-        ev["topic"] = _map_topic_from_cols(ev)
+        ev["topic"] = _map_topics_from_lookup(ev, topic_lookup, invalid_tokens=invalid_tokens)
     else:
         ev["topic"] = pd.Series(dtype="object")
 
     if not sd.empty:
-        sd["topic"] = _map_topic_from_cols(sd)
+        sd["topic"] = _map_topics_from_lookup(sd, topic_lookup, invalid_tokens=invalid_tokens)
     else:
         sd["topic"] = pd.Series(dtype="object")
 
@@ -186,20 +246,8 @@ def _topic_corpus(ev: pd.DataFrame, sd: pd.DataFrame, signups_df: pd.DataFrame, 
     ) if not ev.empty and {"event_type", "topic", "msg_id"}.issubset(ev.columns) else pd.Series(dtype=float, name="Y_ev")
 
     if not signups_df.empty and ("campaign" in signups_df.columns or "campaign_id" in signups_df.columns):
-        sgn = signups_df.copy()
         camp2topic = _build_campaign_topic_map(campaigns_df)
-        topic = pd.Series("", index=sgn.index, dtype="object")
-        invalid_tokens = {"", "nan", "none", "null"}
-        for c in ("campaign", "campaign_id"):
-            if c not in sgn.columns:
-                continue
-            raw = sgn[c].astype(str).str.strip()
-            mapped = raw.map(camp2topic).fillna(raw.str.lower().map(camp2topic)).fillna("")
-            inferred = raw.map(_extract_topic_from_text).fillna("")
-            mapped_txt = mapped.astype(str).str.strip().str.lower()
-            mapped = mapped.where(~mapped_txt.isin(invalid_tokens), inferred)
-            topic = topic.where(topic.astype(str).str.strip() != "", mapped)
-        sgn["topic"] = topic
+        sgn = _prepare_signups_with_topics(signups_df, camp2topic)
         id_col = "signup_id" if "signup_id" in sgn.columns else None
         if id_col:
             y_tab = (
@@ -265,22 +313,8 @@ def _owners_series(ev: pd.DataFrame, signups_df: pd.DataFrame, campaigns_df: pd.
     if not signups_df.empty and {"email"}.issubset(signups_df.columns) and (
         "campaign" in signups_df.columns or "campaign_id" in signups_df.columns
     ):
-        sgn = signups_df.copy()
         camp2topic = _build_campaign_topic_map(campaigns_df)
-        topic = pd.Series("", index=sgn.index, dtype="object")
-        invalid_tokens = {"", "nan", "none", "null"}
-        for c in ("campaign", "campaign_id"):
-            if c not in sgn.columns:
-                continue
-            raw = sgn[c].astype(str).str.strip()
-            mapped = raw.map(camp2topic).fillna(raw.str.lower().map(camp2topic)).fillna("")
-            inferred = raw.map(_extract_topic_from_text).fillna("")
-            mapped_txt = mapped.astype(str).str.strip().str.lower()
-            mapped = mapped.where(~mapped_txt.isin(invalid_tokens), inferred)
-            topic = topic.where(topic.astype(str).str.strip() != "", mapped)
-        sgn["topic"] = topic
-        sgn["email"] = sgn["email"].astype(str).str.strip().str.lower()
-        sgn = sgn[sgn["topic"].astype(str).str.strip() != ""]
+        sgn = _prepare_signups_with_topics(signups_df, camp2topic)
         id_col = "signup_id" if "signup_id" in sgn.columns else None
         if id_col:
             own_tab = sgn.groupby(["email", "topic"])[id_col].nunique().gt(0)
@@ -301,7 +335,11 @@ def _owners_series(ev: pd.DataFrame, signups_df: pd.DataFrame, campaigns_df: pd.
     return owners
 
 
-def _prepare_signups_with_topics(signups_df: pd.DataFrame, camp2topic: dict[str, str]) -> pd.DataFrame:
+def _prepare_signups_with_topics(
+    signups_df: pd.DataFrame,
+    camp2topic: dict[str, str],
+    topic_lookup: dict[str, str] | None = None,
+) -> pd.DataFrame:
     """Normalize signups and enrich with topic/topic_norm."""
     if signups_df is None or signups_df.empty:
         return pd.DataFrame(columns=["email", "topic", "topic_norm", "signup_id"])
@@ -312,17 +350,17 @@ def _prepare_signups_with_topics(signups_df: pd.DataFrame, camp2topic: dict[str,
     else:
         sgn["email"] = pd.NA
 
-    topic = pd.Series("", index=sgn.index, dtype="object")
-    for c in ("campaign", "campaign_id"):
-        if c not in sgn.columns:
-            continue
-        raw = sgn[c].astype(str).str.strip()
-        mapped = raw.map(camp2topic).fillna(raw.str.lower().map(camp2topic)).fillna("")
-        inferred = raw.map(_extract_topic_from_text).fillna("")
-        mapped = mapped.where(mapped.astype(str).str.strip() != "", inferred)
-        topic = topic.where(topic.astype(str).str.strip() != "", mapped)
+    invalid_tokens = {"", "nan", "none", "null"}
+    if topic_lookup is None:
+        lookup_series = [sgn[c] for c in ("campaign", "campaign_id") if c in sgn.columns]
+        topic_lookup = _topic_lookup_from_unique_values(lookup_series, camp2topic, invalid_tokens)
 
-    sgn["topic"] = topic.astype(str).str.strip()
+    sgn["topic"] = _map_topics_from_lookup(
+        sgn,
+        topic_lookup,
+        source_cols=("campaign", "campaign_id"),
+        invalid_tokens=invalid_tokens,
+    )
     sgn = sgn[sgn["topic"] != ""].copy()
     sgn["topic_norm"] = sgn["topic"].str.lower()
     return sgn
@@ -518,7 +556,9 @@ def _topic_email_rollup(ev_t: pd.DataFrame, sd_t: pd.DataFrame, signups_t: pd.Da
             ]
         )
     )
-    return out.select(["topic", "topic_norm", "email", "S", "O", "C", "U", "Q", "Y", "owner", "last_open_ts"]).to_pandas()
+    return out.select(
+        ["topic", "topic_norm", "email", "S", "O", "C", "U", "Q", "Y_ev", "Y", "owner", "last_open_ts"]
+    ).to_pandas()
 
 
 def _db_fingerprint(paths: Tuple[str, str, str]) -> str:
@@ -584,6 +624,46 @@ def _cached_customer360_bundle_by_fp(
         topic_totals,
         topic_email_rollup,
     )
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _cached_customer360_ui_derivatives_by_fp(
+    fp: str, events_db: str, sends_db: str, campaigns_db: str
+) -> tuple[list[str], list[str], list[str]]:
+    """Small UI derivatives cached by DB fingerprint to speed reruns."""
+    (
+        _events,
+        _sends,
+        _campaigns,
+        _signups,
+        _ev_t,
+        _sd_t,
+        corpus,
+        _owners_mi,
+        users_df,
+        _camp2topic,
+        _signups_t,
+        _topic_totals,
+        _topic_email_rollup,
+    ) = _cached_customer360_bundle_by_fp(fp, events_db, sends_db, campaigns_db)
+
+    emails_sorted = users_df["email"].dropna().astype(str).sort_values().unique().tolist()
+    domain_options = sorted([d for d in users_df["domain"].dropna().unique().tolist() if isinstance(d, str)])
+
+    topic_source = corpus.copy()
+    if "S_total" in topic_source.columns:
+        topic_source = topic_source[pd.to_numeric(topic_source["S_total"], errors="coerce").fillna(0) > 0]
+    topic_options = (
+        topic_source["topic"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .loc[lambda s: s != ""]
+        .sort_values()
+        .unique()
+        .tolist()
+    )
+    return emails_sorted, domain_options, topic_options
 
 
     # ---------------------- Small helpers ----------------------
@@ -741,6 +821,62 @@ def _request_nav_to_editor(recipients: list[str], subject: str) -> None:
     st.rerun()
 
 
+def _recipient_topic_detail_from_rollup(
+    picked_email: str,
+    topic_email_rollup: pd.DataFrame,
+    corpus: pd.DataFrame,
+    *,
+    alpha: float,
+) -> pd.DataFrame:
+    """Build per-recipient topic detail from pre-aggregated topic_email_rollup."""
+    cols = [
+        "topic",
+        "N_sends_topic",
+        "N_opens_topic",
+        "N_clicks_topic",
+        "N_unsubs_topic",
+        "N_signups_topic",
+        "open_rate",
+        "ctr",
+        "unsub_rate",
+        "p_signup",
+        "Registered",
+    ]
+    if not picked_email or topic_email_rollup is None or topic_email_rollup.empty:
+        return pd.DataFrame(columns=cols)
+
+    df = topic_email_rollup[
+        topic_email_rollup["email"].astype(str).str.strip().str.lower().eq(str(picked_email).strip().lower())
+    ].copy()
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+
+    # Keep previous semantics for Recipient Detail signups (event signups if available).
+    signups_src = "Y_ev" if "Y_ev" in df.columns else ("Y" if "Y" in df.columns else None)
+    if signups_src is None:
+        df["N_signups_topic"] = 0.0
+    else:
+        df["N_signups_topic"] = pd.to_numeric(df[signups_src], errors="coerce").fillna(0.0)
+
+    df["N_sends_topic"] = pd.to_numeric(df.get("S", 0.0), errors="coerce").fillna(0.0)
+    df["N_opens_topic"] = pd.to_numeric(df.get("O", 0.0), errors="coerce").fillna(0.0)
+    df["N_clicks_topic"] = pd.to_numeric(df.get("C", 0.0), errors="coerce").fillna(0.0)
+    df["N_unsubs_topic"] = pd.to_numeric(df.get("U", 0.0), errors="coerce").fillna(0.0)
+    owner_col = df["owner"] if "owner" in df.columns else pd.Series(False, index=df.index)
+    df["Registered"] = owner_col.astype(bool)
+
+    df["open_rate"] = (df["N_opens_topic"] / df["N_sends_topic"]).where(df["N_sends_topic"] > 0, other=0.0)
+    df["ctr"] = (df["N_clicks_topic"] / df["N_sends_topic"]).where(df["N_sends_topic"] > 0, other=0.0)
+    df["unsub_rate"] = (df["N_unsubs_topic"] / df["N_sends_topic"]).where(df["N_sends_topic"] > 0, other=0.0)
+
+    p0 = corpus[["topic", "p0_signup"]] if {"topic", "p0_signup"}.issubset(corpus.columns) else pd.DataFrame(columns=["topic", "p0_signup"])
+    df = df.merge(p0, on="topic", how="left").fillna({"p0_signup": 0.01})
+    df["p_signup"] = (df["N_signups_topic"] + float(alpha) * df["p0_signup"]) / (df["N_sends_topic"] + float(alpha))
+
+    out = df[cols].sort_values(["p_signup", "N_sends_topic"], ascending=[False, False]).reset_index(drop=True)
+    return out
+
+
 def render_recipient_insights() -> None:
     """Customer 360º (Recipient Insights) with tabs:
        - Campaign Planning (topic audience + best next campaigns)
@@ -777,6 +913,9 @@ def render_recipient_insights() -> None:
             topic_totals,
             topic_email_rollup,
         ) = _cached_customer360_bundle_by_fp(fp, events_db, sends_db, campaigns_db)
+        emails_sorted_cached, domain_options_cached, topic_options_cached = _cached_customer360_ui_derivatives_by_fp(
+            fp, events_db, sends_db, campaigns_db
+        )
     except Exception as exc:
         st.error(f"Failed to load data: {exc}")
         return
@@ -806,11 +945,9 @@ def render_recipient_insights() -> None:
         # Cachea emails_sorted por fingerprint (evita sort+unique en cada rerun)
         if st.session_state.get("_emails_sorted_fp") != fp:
             st.session_state["_emails_sorted_fp"] = fp
-            st.session_state["_emails_sorted"] = (
-                users_df["email"].dropna().astype(str).sort_values().unique().tolist()
-            )
+            st.session_state["_emails_sorted"] = emails_sorted_cached
 
-        emails_sorted = st.session_state.get("_emails_sorted", [])
+        emails_sorted = st.session_state.get("_emails_sorted", emails_sorted_cached)
         use_select = len(emails_sorted) <= 10000
         if use_select:
             picked = st.selectbox("Find recipient", options=[""] + emails_sorted, index=0)
@@ -836,52 +973,13 @@ def render_recipient_insights() -> None:
 
                 # ---- Per-topic detail with Registered + p_signup (EB) ----
                 st.subheader("Topic interest (per recipient)")
-                sd_e = sd_t[sd_t["email"] == picked].copy()
-                ev_e = ev_t[ev_t["email"] == picked].copy()
-
-                sends_topic = sd_e.dropna(subset=["topic"]).groupby("topic")["msg_id"].nunique().rename("N_sends_topic")
-                def _cnt(evtype: str) -> pd.Series:
-                    m = ev_e[ev_e["event_type"].str.lower().eq(evtype)]
-                    return m.dropna(subset=["topic"]).groupby("topic")["msg_id"].nunique()
-
-                opens_t = _cnt("open").rename("N_opens_topic")
-                clicks_t = _cnt("click").rename("N_clicks_topic")
-                unsubs_t = _cnt("unsubscribe").rename("N_unsubs_topic")
-                signups_t = _cnt("signup").rename("N_signups_topic")
-
-                tdf = (
-                    pd.DataFrame(index=pd.Index([], name="topic"))
-                    .join(sends_topic, how="outer")
-                    .join(opens_t, how="outer")
-                    .join(clicks_t, how="outer")
-                    .join(unsubs_t, how="outer")
-                    .join(signups_t, how="outer")
-                    .fillna(0.0)
-                    .reset_index()
+                tdf = _recipient_topic_detail_from_rollup(
+                    picked, topic_email_rollup, corpus, alpha=ALPHA
                 )
 
                 if tdf.empty:
                     st.info("No topic-level information is available for this recipient.")
                 else:
-                    # raw rates
-                    tdf["open_rate"] = (tdf["N_opens_topic"] / tdf["N_sends_topic"]).where(tdf["N_sends_topic"] > 0, other=0.0)
-                    tdf["ctr"] = (tdf["N_clicks_topic"] / tdf["N_sends_topic"]).where(tdf["N_sends_topic"] > 0, other=0.0)
-                    tdf["unsub_rate"]= (tdf["N_unsubs_topic"] / tdf["N_sends_topic"]).where(tdf["N_sends_topic"] > 0, other=0.0)
-
-                    # merge p0_signup from corpus, compute p_signup (EB)
-                    tdf = tdf.merge(corpus[["topic", "p0_signup"]], on="topic", how="left").fillna({"p0_signup": 0.01})
-                    S_loc = tdf["N_sends_topic"].astype(float)
-                    Y_loc = tdf["N_signups_topic"].astype(float)
-                    tdf["p_signup"] = (Y_loc + ALPHA * tdf["p0_signup"]) / (S_loc + ALPHA)
-
-                    # Registered from owners_mi
-                    def _reg(t: str) -> bool:
-                        try:
-                            return bool(owners_mi.loc[(picked, t)])
-                        except Exception:
-                            return False
-                    tdf["Registered"] = tdf["topic"].map(_reg)
-
                     # View controls
                     col_tt1, col_tt2 = st.columns([1, 1])
                     top_only = col_tt1.checkbox("Top topics only", value=True, help="Show only the K most relevant topics for this recipient.")
@@ -958,21 +1056,7 @@ def render_recipient_insights() -> None:
 
         # --- Topic audience ---
         st.subheader("Topic audience")
-        topic_source = corpus.copy()
-        if "S_total" in topic_source.columns:
-            topic_source = topic_source[
-                pd.to_numeric(topic_source["S_total"], errors="coerce").fillna(0) > 0
-            ]
-        topic_options = (
-            topic_source["topic"]
-            .dropna()
-            .astype(str)
-            .str.strip()
-            .loc[lambda s: s != ""]
-            .sort_values()
-            .unique()
-            .tolist()
-        )
+        topic_options = topic_options_cached
         if not topic_options:
             st.info("No topics available to build an audience.")
         else:
@@ -1009,7 +1093,7 @@ def render_recipient_insights() -> None:
                     help="0 = no recency filter. If >0, requires an open within that number of days (in this topic).",
                 )
 
-                domain_options = sorted([d for d in users_df["domain"].dropna().unique().tolist() if isinstance(d, str)])
+                domain_options = domain_options_cached
                 col_f3.multiselect(
                     "Domains (include; empty=all)",
                     options=domain_options,
