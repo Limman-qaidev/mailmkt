@@ -11,21 +11,41 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, Union, Iterable
 
 from analytics.db import load_all_data
 from analytics.metrics import compute_campaign_metrics
 
+import sqlite3
 
-def _db_fingerprint(paths: Tuple[str, str, str]) -> str:
-    parts = []
-    for p in paths:
-        try:
-            st_ = os.stat(p)
-            parts.append(f"{p}:{st_.st_mtime_ns}:{st_.st_size}")
-        except FileNotFoundError:
-            parts.append(f"{p}:missing")
-    return "|".join(parts)
+
+def _db_fingerprint(path_or_paths: Union[str, Path, Iterable[Union[str, Path]]]):
+    """
+    Return a stable fingerprint for one path or many paths.
+    - If one path -> returns (abs_path, mtime_ns, size)
+    - If many paths -> returns a tuple of those fingerprints
+    """
+    def _one(p: Union[str, Path]):
+        pp = Path(p)
+        st = pp.stat()
+        return (str(pp.resolve()), int(st.st_mtime_ns), int(st.st_size))
+
+    if isinstance(path_or_paths, (str, Path)):
+        return _one(path_or_paths)
+
+    return tuple(_one(p) for p in path_or_paths)
+
+@st.cache_data(show_spinner=False)
+def load_table(db_path: str, query: str) -> pd.DataFrame:
+    """Load a table/query from SQLite and return a DataFrame (cached)."""
+    with sqlite3.connect(db_path) as con:
+        return pd.read_sql_query(query, con)
+
+@st.cache_data(show_spinner=False)
+def compute_metrics_cached(events: pd.DataFrame, email_map: pd.DataFrame) -> pd.DataFrame:
+    """Compute campaign metrics (cached). Keep this pure/deterministic."""
+    # ... your existing computations ...
+    return metrics_df
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -152,15 +172,6 @@ def render_campaign_metrics_view() -> None:
 
     events, sends, campaigns, signups = _cached_load_all_data_by_fp(fp, events_db, sends_db, campaigns_db)
 
-    try:
-        #events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
-        events, sends, campaigns, signups = _cached_load_all_data(
-                events_db, sends_db, campaigns_db
-            )
-    except Exception as exc:  # pragma: no cover - defensive
-        st.error(f"Failed to load data: {exc}")
-        return
-
     # --- Harmonize keys / types ---
     for df in (events, sends, signups):
         if "campaign" in df.columns:
@@ -199,12 +210,12 @@ def render_campaign_metrics_view() -> None:
         signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
 
     # Compatibility
-    with st.sidebar:
-        st.markdown("### Maintenance")
+    """with st.sidebar:
+        # st.markdown("### Maintenance")
         if st.button("Regenerate distribution lists (CSV)", key="btn_regen_distro"):
             with st.spinner("Generating distribution lists..."):
                 generate_distribution_list_by_campaign()
-            st.success("Distribution lists updated.")
+            st.success("Distribution lists updated.")"""
 
     # -------------- Helpers --------------
     def _date_bounds() -> tuple[pd.Timestamp, pd.Timestamp]:

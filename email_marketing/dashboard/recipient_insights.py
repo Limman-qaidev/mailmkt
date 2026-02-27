@@ -16,6 +16,116 @@ from email_marketing.analytics.user_metrics import (
     compute_eb_rates,
 )
 
+import sqlite3
+
+
+def _extract_topic_from_text(text: str) -> str:
+    """Extract topic label from a subject or campaign name."""
+    if not isinstance(text, str):
+        return ""
+    s = text.strip().lower()
+    # Keep it simple and deterministic (adjust your rules if needed)
+    if "loan" in s:
+        return "Loans"
+    if "mortgage" in s:
+        return "Mortgage"
+    if "savings" in s:
+        return "Savings Account"
+    return ""
+
+
+def _build_campaign_topic_map(campaigns_df: pd.DataFrame) -> dict[str, str]:
+    """Map campaign_id -> topic."""
+    if campaigns_df is None or campaigns_df.empty:
+        return {}
+    if "campaign_id" not in campaigns_df.columns:
+        # Try best-effort fallback
+        campaigns_df = campaigns_df.rename(columns={campaigns_df.columns[0]: "campaign_id"})
+    name_col = "campaign_name" if "campaign_name" in campaigns_df.columns else "campaign_id"
+    out: dict[str, str] = {}
+    for _, row in campaigns_df.iterrows():
+        cid = str(row["campaign_id"])
+        out[cid] = _extract_topic_from_text(str(row.get(name_col, cid)))
+    return out
+
+
+def _prepare_ev_sd_with_topics(
+    events_df: pd.DataFrame,
+    sends_df: pd.DataFrame,
+    campaigns_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Return (events_df_enriched, sends_df_enriched) adding 'topic' column if possible.
+    Never fails: if it can't enrich, it returns the original dfs with topic="".
+    """
+    if events_df is None or events_df.empty:
+        return events_df, sends_df
+
+    topic_map = _build_campaign_topic_map(campaigns_df)
+
+    # Ensure campaign_id exists or can be derived
+    if "campaign_id" not in events_df.columns and "campaign" in events_df.columns:
+        events_df = events_df.rename(columns={"campaign": "campaign_id"})
+
+    if "campaign_id" in events_df.columns:
+        events_df = events_df.copy()
+        events_df["topic"] = events_df["campaign_id"].astype(str).map(topic_map).fillna("")
+    else:
+        events_df = events_df.copy()
+        events_df["topic"] = ""
+
+    if sends_df is not None and not sends_df.empty:
+        if "campaign_id" not in sends_df.columns and "campaign" in sends_df.columns:
+            sends_df = sends_df.rename(columns={"campaign": "campaign_id"})
+        sends_df = sends_df.copy()
+        if "campaign_id" in sends_df.columns:
+            sends_df["topic"] = sends_df["campaign_id"].astype(str).map(topic_map).fillna("")
+        else:
+            sends_df["topic"] = ""
+
+    return events_df, sends_df
+
+
+def _topic_corpus(events_df: pd.DataFrame) -> pd.DataFrame:
+    """Build a topic-level corpus from events (for Customer 360)."""
+    if events_df is None or events_df.empty or "topic" not in events_df.columns:
+        return pd.DataFrame()
+    # Example: counts by topic + event_type
+    cols = [c for c in ["topic", "event_type"] if c in events_df.columns]
+    if len(cols) < 2:
+        return pd.DataFrame()
+    return (
+        events_df.groupby(cols, dropna=False)
+        .size()
+        .reset_index(name="count")
+        .sort_values(["topic", "count"], ascending=[True, False])
+    )
+
+
+def _owners_series(campaigns_df: pd.DataFrame) -> pd.Series:
+    """Return Series indexed by campaign_id with owner (if available)."""
+    if campaigns_df is None or campaigns_df.empty:
+        return pd.Series(dtype="object")
+    if "campaign_id" not in campaigns_df.columns:
+        campaigns_df = campaigns_df.rename(columns={campaigns_df.columns[0]: "campaign_id"})
+    owner_col = "owner" if "owner" in campaigns_df.columns else None
+    if owner_col is None:
+        return pd.Series(dtype="object")
+    s = campaigns_df.set_index("campaign_id")[owner_col]
+    return s
+
+
+@st.cache_data(show_spinner=False)
+def load_table(db_path: str, query: str) -> pd.DataFrame:
+    """Load a table/query from SQLite and return a DataFrame (cached)."""
+    with sqlite3.connect(db_path) as con:
+        return pd.read_sql_query(query, con)
+
+@st.cache_data(show_spinner=False)
+def compute_metrics_cached(events: pd.DataFrame, email_map: pd.DataFrame) -> pd.DataFrame:
+    """Compute campaign metrics (cached). Keep this pure/deterministic."""
+    # ... your existing computations ...
+    return metrics_df
 
 def _db_fingerprint(paths: Tuple[str, str, str]) -> str:
     """
@@ -41,33 +151,36 @@ def _cached_load_all_data_by_fp(fp: str, events_db: str, sends_db: str, campaign
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _cached_customer360_artifacts_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+def _cached_customer360_bundle_by_fp(
+    fp: str, events_db: str, sends_db: str, campaigns_db: str
+):
     """
-    Cached artifacts for Customer 360 view:
-    - events prepared with email
-    - campaign topic map
-    - per-recipient topic metrics
-    - users aggregates + rates
+    Cached bundle for Customer 360 page.
+    Heavy transforms live here so reruns don't recompute them.
+    NOTE: fp is only used as a cache key.
     """
     events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
 
-    # Ensure consistent dtypes (avoid repeated coercion on reruns)
+    # Normalize dtypes once
     for df_ in (events, sends, campaigns, signups):
         if "campaign" in df_.columns:
             df_["campaign"] = df_["campaign"].astype(str)
 
+    # Ensure email in events (join from sends if needed)
     events_prepared = _prepare_events_with_email(events, sends)
-    campaign_topic_map = _build_campaign_topic_map(campaigns)
 
-    topic_metrics_df = _recipient_topic_metrics(
-        events_prepared, sends, signups, campaign_topic_map
-    )
+    # Build topic-aware versions + topic corpus + ownership map
+    ev_t, sd_t, _ = _prepare_ev_sd_with_topics(events_prepared, sends, campaigns)
+    corpus = _topic_corpus(ev_t, sd_t, signups, campaigns)
+    owners_mi = _owners_series(ev_t, signups, campaigns)
 
+    # Global user aggregates (Recipient Detail tab)
     users_df = build_user_aggregates(events_prepared, sends, signups)
     if not users_df.empty:
         users_df = compute_eb_rates(users_df)
 
-    return events_prepared, sends, campaigns, signups, campaign_topic_map, topic_metrics_df, users_df
+    return events_prepared, sends, campaigns, signups, ev_t, sd_t, corpus, owners_mi, users_df
+
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def _cached_customer360_artifacts(fp: str, events_db: str, sends_db: str, campaigns_db: str):
@@ -88,38 +201,14 @@ def _cached_customer360_artifacts(fp: str, events_db: str, sends_db: str, campai
     return corpus, owners_mi, users_df
 
 
-def _extract_topic_from_text(text: str) -> str:
-    """Heuristic: [Topic] prefix, else left segment before — / - / : ."""
-    if not isinstance(text, str):
-        return ""
-    s = text.strip()
-    m = re.match(r"^\s*\[([^\]]+)\]\s*", s)
-    if m:
-        return m.group(1).strip()
-    for sep in ("—", "-", ":"):
-        if sep in s:
-            return s.split(sep, 1)[0].strip()
-    return " ".join(s.split()[:3]).strip()  # último recurso
-
-def _build_campaign_topic_map(campaigns: pd.DataFrame) -> dict[str, str]:
-    """Map campaign name -> topic (prefer 'topic' column; else parse 'subject'/'name')."""
-    if campaigns is None or campaigns.empty:
-        return {}
-    cols = {c.lower(): c for c in campaigns.columns}
-    name_col = cols.get("name") or next((c for c in campaigns.columns if c.lower().startswith("name")), None)
-    topic_col = cols.get("topic")
-    subject_col = cols.get("subject")
-
-    cmap: dict[str, str] = {}
-    for _, row in campaigns.iterrows():
-        name = str(row.get(name_col, "")).strip() if name_col else ""
-        topic = str(row.get(topic_col, "")).strip() if topic_col else ""
-        if not topic:
-            subj = str(row.get(subject_col, "")).strip() if subject_col else ""
-            topic = _extract_topic_from_text(subj or name)
-        if name:
-            cmap[name] = topic or "Other"
-    return cmap
+    # ---------------------- Small helpers ----------------------
+def _ensure_num_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Ensure columns exist and are numeric (filled with 0.0)."""
+    for c in cols:
+        if c not in df.columns:
+            df[c] = 0.0
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    return df
 
 def _recipient_topic_metrics(
     picked_email: str,
@@ -282,157 +371,27 @@ def render_recipient_insights() -> None:
     ALPHA = 5.0          # EB prior strength
     TOPN_DEFAULT = 500   # default top N in topic audience
 
-    # ---------------------- Small helpers ----------------------
-    def _ensure_num_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-        """Ensure columns exist and are numeric (filled with 0.0)."""
-        for c in cols:
-            if c not in df.columns:
-                df[c] = 0.0
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-        return df
-
-    def _extract_topic_from_text(text: str) -> str:
-        if not isinstance(text, str):
-            return ""
-        s = text.strip()
-        m = re.match(r"^\s*\[([^\]]+)\]\s*", s)
-        if m:
-            return m.group(1).strip()
-        for sep in ("—", "-", ":"):
-            if sep in s:
-                return s.split(sep, 1)[0].strip()
-        return " ".join(s.split()[:3]).strip()
-
-    def _build_campaign_topic_map(campaigns_df: pd.DataFrame) -> dict[str, str]:
-        if campaigns_df is None or campaigns_df.empty:
-            return {}
-        cols = {c.lower(): c for c in campaigns_df.columns}
-        name_col = cols.get("name") or next((c for c in campaigns_df.columns if c.lower().startswith("name")), None)
-        topic_col = cols.get("topic")
-        subject_col = cols.get("subject")
-        cmap: dict[str, str] = {}
-        for _, rowc in campaigns_df.iterrows():
-            name = str(rowc.get(name_col, "")).strip() if name_col else ""
-            topic = str(rowc.get(topic_col, "")).strip() if topic_col else ""
-            if not topic:
-                subj = str(rowc.get(subject_col, "")).strip() if subject_col else ""
-                topic = _extract_topic_from_text(subj or name)
-            if name:
-                cmap[name] = topic or "Other"
-        return cmap
-
-    def _prepare_ev_sd_with_topics(
-        events_df: pd.DataFrame,
-        sends_df: pd.DataFrame,
-        campaigns_df: pd.DataFrame,
-    ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
-        ev = events_df.copy()
-        sd = sends_df.copy()
-
-        ev["email"] = ev["email"].astype(str).str.strip().str.lower()
-        if "event_ts" not in ev.columns and "ts" in ev.columns:
-            ev["event_ts"] = pd.to_datetime(ev["ts"], errors="coerce", utc=True)
-
-        rc = "recipient" if "recipient" in sd.columns else ("email" if "email" in sd.columns else None)
-        if rc:
-            sd["email"] = sd[rc].astype(str).str.strip().str.lower()
-        else:
-            sd["email"] = pd.NA
-
-        # msg_id -> campaign via events
-        if "campaign" in ev.columns and "msg_id" in ev.columns:
-            msg2camp = (
-                ev.loc[ev["campaign"].notna(), ["msg_id", "campaign"]]
-                .drop_duplicates("msg_id")
-                .set_index("msg_id")["campaign"]
-            )
-        else:
-            msg2camp = pd.Series(dtype=str)
-
-        if "msg_id" in sd.columns and not msg2camp.empty:
-            sd["campaign"] = sd["msg_id"].map(msg2camp)
-
-        camp2topic = _build_campaign_topic_map(campaigns_df)
-        ev["topic"] = ev["campaign"].map(camp2topic).fillna(ev["campaign"].map(_extract_topic_from_text))
-        sd["topic"] = sd["campaign"].map(camp2topic).fillna(sd["campaign"].map(_extract_topic_from_text))
-        return ev, sd, camp2topic
-
-    def _topic_corpus(ev: pd.DataFrame, sd: pd.DataFrame, signups_df: pd.DataFrame) -> pd.DataFrame:
-        """Corpus per topic: S_total, Y_total (signups) and p0_signup."""
-        sends_t = sd.dropna(subset=["topic"]).groupby("topic")["msg_id"].nunique().rename("S_total")
-
-        # signups from events
-        y_ev = (
-            ev[ev["event_type"].str.lower().eq("signup")]
-            .dropna(subset=["topic"])
-            .groupby("topic")["msg_id"].nunique()
-            .rename("Y_ev")
-        )
-        # signups from signups table (map campaign->topic first)
-        if not signups_df.empty and "campaign" in signups_df.columns:
-            sgn = signups_df.copy()
-            sgn["campaign"] = sgn["campaign"].astype(str)
-            camp2topic = _build_campaign_topic_map(campaigns)
-            sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(sgn["campaign"].map(_extract_topic_from_text))
-            y_tab = sgn.dropna(subset=["topic"]).groupby("topic")["signup_id"].nunique().rename("Y_tab")
-        else:
-            y_tab = pd.Series(dtype=float, name="Y_tab")
-
-        corp = (
-            pd.DataFrame(index=pd.Index([], name="topic"))
-            .join(sends_t, how="outer")
-            .join(y_ev, how="outer")
-            .join(y_tab, how="outer")
-            .fillna(0.0)
-            .reset_index()
-        )
-        corp["Y_total"] = corp["Y_ev"] + corp["Y_tab"]
-        corp["p0_signup"] = (corp["Y_total"] / corp["S_total"]).where(corp["S_total"] > 0, other=0.01)
-        return corp[["topic", "S_total", "Y_total", "p0_signup"]]
-
-    def _owners_series(ev: pd.DataFrame, signups_df: pd.DataFrame) -> pd.Series:
-        """(email, topic) -> bool if the user has registered (events or table)."""
-        ev_su = ev[ev["event_type"].str.lower().eq("signup")]
-        own_ev = (ev_su.groupby(["email", "topic"])["msg_id"].nunique() > 0)
-
-        if not signups_df.empty and {"campaign", "email"}.issubset(signups_df.columns):
-            sgn = signups_df.copy()
-            sgn["email"] = sgn["email"].astype(str).str.strip().str.lower()
-            camp2topic = _build_campaign_topic_map(campaigns)
-            sgn["topic"] = sgn["campaign"].map(camp2topic).fillna(sgn["campaign"].map(_extract_topic_from_text))
-            own_tab = (sgn.dropna(subset=["topic"]).groupby(["email", "topic"])["signup_id"].nunique() > 0)
-        else:
-            own_tab = pd.Series(dtype=bool)
-
-        owners = own_ev.combine(own_tab, func=lambda a, b: bool(a) or bool(b)).fillna(False)
-        owners.name = "owner"
-        return owners
-
     # ---------------------- Load & harmonize data ----------------------
     st.title("Customer 360º")
 
     events_db, sends_db, campaigns_db = _default_db_paths()
     try:
         fp = _db_fingerprint((events_db, sends_db, campaigns_db))
-        events, sends, campaigns, signups = _cached_load_all_data_by_fp(fp, events_db, sends_db, campaigns_db)
+        (
+            events,
+            sends,
+            campaigns,
+            signups,
+            ev_t,
+            sd_t,
+            corpus,
+            owners_mi,
+            users_df,
+        ) = _cached_customer360_bundle_by_fp(fp, events_db, sends_db, campaigns_db)
     except Exception as exc:
         st.error(f"Failed to load data: {exc}")
         return
 
-    for df_ in (events, sends, signups):
-        if "campaign" in df_.columns:
-            df_["campaign"] = df_["campaign"].astype(str)
-
-    # Guarantee email in events
-    events = _prepare_events_with_email(events, sends)
-
-    # Topic-prepared versions
-    ev_t, sd_t, _ = _prepare_ev_sd_with_topics(events, sends, campaigns)
-    corpus = _topic_corpus(ev_t, sd_t, signups)
-    owners_mi = _owners_series(ev_t, signups)  # MultiIndex (email, topic) -> bool
-
-    # Global aggregates per email (for the Recipient Detail tab)
-    users_df = build_user_aggregates(events, sends, signups)
     if users_df.empty:
         st.info("No recipient data available.")
         return

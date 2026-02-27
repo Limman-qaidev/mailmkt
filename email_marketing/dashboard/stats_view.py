@@ -193,18 +193,22 @@ def render_stats_view() -> None:
     # 1) Determine refresh interval (default 60 seconds if not set).
     refresh_interval = style.get_refresh_interval()
 
-    # 2) Inject JavaScript to reload the page every refresh_interval seconds.
-    components.html(
-        f"""
-        <script>
-            setTimeout(function() {{
-                window.location.reload();
-            }}, {refresh_interval * 1000});
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
+    col_a, col_b = st.columns([1, 3])
+    with col_a:
+        auto_refresh = st.toggle("Auto refresh", value=False, help="Recompute metrics periodically.")
+    with col_b:
+        st.caption(f"Refresh interval: {refresh_interval}s (set with REFRESH_INTERVAL env var).")
+
+    if auto_refresh:
+        # Streamlit-safe periodic rerun (no hard reload)
+        st.session_state["_stats_last_refresh_ts"] = st.session_state.get("_stats_last_refresh_ts", 0)
+
+        import time as _time
+        now = int(_time.time())
+        last = int(st.session_state["_stats_last_refresh_ts"])
+        if now - last >= refresh_interval:
+            st.session_state["_stats_last_refresh_ts"] = now
+            st.rerun()
 
     # 3) Load events
     events = _load_events().drop_duplicates(subset=["msg_id", "event_type"])

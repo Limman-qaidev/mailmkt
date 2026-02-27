@@ -253,7 +253,7 @@ def get_refresh_interval() -> int:
     Defaults to 10 seconds when missing or invalid.
     """
     try:
-        return int(os.environ.get("REFRESH_INTERVAL", "10"))
+        return int(os.environ.get("REFRESH_INTERVAL", "300"))
     except ValueError:
         return 10
 
