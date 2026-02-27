@@ -864,6 +864,10 @@ def _recipient_topic_detail_from_rollup(
     df["N_unsubs_topic"] = pd.to_numeric(df.get("U", 0.0), errors="coerce").fillna(0.0)
     owner_col = df["owner"] if "owner" in df.columns else pd.Series(False, index=df.index)
     df["Registered"] = owner_col.astype(bool)
+    # Recipient detail should only include topics with actual exposure.
+    df = df[df["N_sends_topic"] > 0].copy()
+    if df.empty:
+        return pd.DataFrame(columns=cols)
 
     df["open_rate"] = (df["N_opens_topic"] / df["N_sends_topic"]).where(df["N_sends_topic"] > 0, other=0.0)
     df["ctr"] = (df["N_clicks_topic"] / df["N_sends_topic"]).where(df["N_sends_topic"] > 0, other=0.0)
@@ -871,7 +875,10 @@ def _recipient_topic_detail_from_rollup(
 
     p0 = corpus[["topic", "p0_signup"]] if {"topic", "p0_signup"}.issubset(corpus.columns) else pd.DataFrame(columns=["topic", "p0_signup"])
     df = df.merge(p0, on="topic", how="left").fillna({"p0_signup": 0.01})
-    df["p_signup"] = (df["N_signups_topic"] + float(alpha) * df["p0_signup"]) / (df["N_sends_topic"] + float(alpha))
+    df["p0_signup"] = pd.to_numeric(df["p0_signup"], errors="coerce").fillna(0.01).clip(0.0, 1.0)
+    df["p_signup"] = (
+        (df["N_signups_topic"] + float(alpha) * df["p0_signup"]) / (df["N_sends_topic"] + float(alpha))
+    ).clip(0.0, 1.0)
 
     out = df[cols].sort_values(["p_signup", "N_sends_topic"], ascending=[False, False]).reset_index(drop=True)
     return out

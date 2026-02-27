@@ -94,20 +94,22 @@ def test_topic_lookup_unique_and_vectorized_mapping() -> None:
 def test_recipient_topic_detail_from_rollup_parity() -> None:
     rollup = pd.DataFrame(
         {
-            "topic": ["Loans", "Cards", "Loans"],
-            "topic_norm": ["loans", "cards", "loans"],
-            "email": ["a@x.com", "a@x.com", "b@x.com"],
-            "S": [10, 4, 2],
-            "O": [7, 2, 1],
-            "C": [3, 1, 0],
-            "U": [0, 1, 0],
-            "Q": [0, 0, 0],
-            "Y_ev": [2, 0, 0],
-            "Y": [1, 0, 0],
-            "owner": [True, False, False],
+            "topic": ["Loans", "Cards", "Loans", "International Multi"],
+            "topic_norm": ["loans", "cards", "loans", "international multi"],
+            "email": ["a@x.com", "a@x.com", "b@x.com", "a@x.com"],
+            "S": [10, 4, 2, 0],
+            "O": [7, 2, 1, 0],
+            "C": [3, 1, 0, 0],
+            "U": [0, 1, 0, 0],
+            "Q": [0, 0, 0, 0],
+            "Y_ev": [2, 0, 0, 0],
+            "Y": [1, 0, 0, 1],
+            "owner": [True, False, False, True],
         }
     )
-    corpus = pd.DataFrame({"topic": ["Loans", "Cards"], "p0_signup": [0.2, 0.1]})
+    corpus = pd.DataFrame(
+        {"topic": ["Loans", "Cards", "International Multi"], "p0_signup": [0.2, 0.1, 1.5]}
+    )
 
     out = _recipient_topic_detail_from_rollup("a@x.com", rollup, corpus, alpha=5.0)
     assert not out.empty
@@ -130,3 +132,5 @@ def test_recipient_topic_detail_from_rollup_parity() -> None:
     assert bool(loans["Registered"]) is True
     expected = (2.0 + 5.0 * 0.2) / (10.0 + 5.0)
     assert abs(float(loans["p_signup"]) - expected) < 1e-12
+    assert "International Multi" not in set(out["topic"].tolist())
+    assert (out["p_signup"] >= 0.0).all() and (out["p_signup"] <= 1.0).all()
