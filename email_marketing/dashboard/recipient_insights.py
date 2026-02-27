@@ -170,14 +170,14 @@ def _cached_customer360_bundle_by_fp(
     events_prepared = _prepare_events_with_email(events, sends)
 
     # Build topic-aware versions + topic corpus + ownership map
-    ev_t, sd_t, _ = _prepare_ev_sd_with_topics(events_prepared, sends, campaigns)
-    corpus = _topic_corpus(ev_t, sd_t, signups, campaigns)
-    owners_mi = _owners_series(ev_t, signups, campaigns)
+    ev_t, sd_t = _prepare_ev_sd_with_topics(events_prepared, sends, campaigns)
+    corpus = _topic_corpus(ev_t)
+    owners_mi = _owners_series(campaigns)
 
     # Global user aggregates (Recipient Detail tab)
     users_df = build_user_aggregates(events_prepared, sends, signups)
-    if not users_df.empty:
-        users_df = compute_eb_rates(users_df)
+    """if not users_df.empty:
+        users_df = compute_eb_rates(users_df)"""
 
     return events_prepared, sends, campaigns, signups, ev_t, sd_t, corpus, owners_mi, users_df
 
@@ -191,9 +191,9 @@ def _cached_customer360_artifacts(fp: str, events_db: str, sends_db: str, campai
             df_["campaign"] = df_["campaign"].astype(str)
 
     events = _prepare_events_with_email(events, sends)
-    ev_t, sd_t, _ = _prepare_ev_sd_with_topics(events, sends, campaigns)
-    corpus = _topic_corpus(ev_t, sd_t, signups)
-    owners_mi = _owners_series(ev_t, signups)
+    ev_t, sd_t = _prepare_ev_sd_with_topics(events_prepared, sends, campaigns)
+    corpus = _topic_corpus(ev_t)
+    owners_mi = _owners_series(campaigns)
 
     users_df = build_user_aggregates(events, sends, signups)
     users_df = compute_eb_rates(users_df) if not users_df.empty else users_df
@@ -415,7 +415,14 @@ def render_recipient_insights() -> None:
     # ======================= TAB: Recipient Detail =======================
     with tab_recipient:
         st.markdown("#### Recipient detail")
-        emails_sorted = users_df["email"].dropna().astype(str).sort_values().unique().tolist()
+        # Cachea emails_sorted por fingerprint (evita sort+unique en cada rerun)
+        if st.session_state.get("_emails_sorted_fp") != fp:
+            st.session_state["_emails_sorted_fp"] = fp
+            st.session_state["_emails_sorted"] = (
+                users_df["email"].dropna().astype(str).sort_values().unique().tolist()
+            )
+
+        emails_sorted = st.session_state.get("_emails_sorted", [])
         use_select = len(emails_sorted) <= 10000
         if use_select:
             picked = st.selectbox("Find recipient", options=[""] + emails_sorted, index=0)

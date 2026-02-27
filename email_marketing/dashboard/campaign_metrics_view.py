@@ -62,6 +62,54 @@ def _cached_load_all_data(events_db: str, sends_db: str, campaigns_db: str):
 def _cached_compute_metrics(sends: pd.DataFrame, events: pd.DataFrame, signups: pd.DataFrame):
     return compute_campaign_metrics(sends, events, signups)
 
+@st.cache_data(show_spinner=False, ttl=300)
+def _cached_campaign_bundle_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
+    """
+    Carga + harmoniza + parsea timestamps + calcula metrics en un solo caché.
+    fp solo se usa como cache-key.
+    """
+    events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
+
+    # --- Harmonize keys / types ---
+    for df in (events, sends, signups):
+        if "campaign" in df.columns:
+            df["campaign"] = df["campaign"].astype(str)
+
+    # msg_id -> campaign from events (para corregir sends)
+    if "campaign" in events.columns and "msg_id" in events.columns and not events.empty:
+        msg2camp = (
+            events.loc[events["campaign"].notna(), ["msg_id", "campaign"]]
+            .drop_duplicates("msg_id")
+            .set_index("msg_id")["campaign"]
+        )
+    else:
+        msg2camp = pd.Series(dtype="object")
+
+    # Preserve variant; rewrite sends.campaign using events map when available
+    if "campaign" in sends.columns:
+        sends = sends.copy()
+        sends["variant"] = sends["campaign"]
+
+    if "msg_id" in sends.columns and not msg2camp.empty:
+        mapped = sends["msg_id"].map(msg2camp)
+        if "campaign" in sends.columns:
+            sends["campaign"] = mapped.combine_first(sends["campaign"])
+        else:
+            sends["campaign"] = mapped
+
+    # Ensure timestamps
+    if "send_ts" in sends.columns:
+        sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
+    if "event_ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(events["event_ts"], errors="coerce")
+    elif "ts" in events.columns:
+        events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
+    if "signup_ts" in signups.columns:
+        signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
+
+    metrics_df = compute_campaign_metrics(sends, events, signups)
+    return events, sends, campaigns, signups, metrics_df
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def _cached_compute_metrics_by_fp(fp: str, events_db: str, sends_db: str, campaigns_db: str):
     events, sends, campaigns, signups = load_all_data(events_db, sends_db, campaigns_db)
@@ -170,44 +218,9 @@ def render_campaign_metrics_view() -> None:
     events_db, sends_db, campaigns_db = _default_db_paths()
     fp = _db_fingerprint((events_db, sends_db, campaigns_db))
 
-    events, sends, campaigns, signups = _cached_load_all_data_by_fp(fp, events_db, sends_db, campaigns_db)
-
-    # --- Harmonize keys / types ---
-    for df in (events, sends, signups):
-        if "campaign" in df.columns:
-            df["campaign"] = df["campaign"].astype(str)
-
-    # msg_id -> campaign from events
-    msg2camp = (
-        events.loc[events["campaign"].notna(), ["msg_id", "campaign"]]
-        .drop_duplicates("msg_id")
-        .set_index("msg_id")["campaign"]
+    events, sends, campaigns, signups, metrics_df = _cached_campaign_bundle_by_fp(
+        str(fp), events_db, sends_db, campaigns_db
     )
-
-    # Preserve variant; rewrite sends.campaign using events map when available
-    if "campaign" in sends.columns:
-        sends["variant"] = sends["campaign"]
-
-    # Aplica el mapeo de msg_id→campaign desde los eventos
-    mapped = sends["msg_id"].map(msg2camp)
-
-    # Si existe la columna campaign, combina; en caso contrario, usa el mapeo tal cual
-    if "campaign" in sends.columns:
-        sends["campaign"] = mapped.combine_first(sends["campaign"])
-    else:
-        sends["campaign"] = mapped
-
-    #sends["campaign"] = sends["msg_id"].map(msg2camp).fillna(sends.get("campaign"))
-
-    # Ensure timestamps
-    if "send_ts" in sends.columns:
-        sends["send_ts"] = pd.to_datetime(sends["send_ts"], errors="coerce")
-    if "event_ts" in events.columns:
-        events["event_ts"] = pd.to_datetime(events["event_ts"], errors="coerce")
-    elif "ts" in events.columns:
-        events["event_ts"] = pd.to_datetime(events["ts"], errors="coerce")
-    if "signup_ts" in signups.columns:
-        signups["signup_ts"] = pd.to_datetime(signups["signup_ts"], errors="coerce")
 
     # Compatibility
     """with st.sidebar:
