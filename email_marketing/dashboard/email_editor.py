@@ -19,6 +19,8 @@ import time
 import urllib.parse
 import uuid
 import sqlite3
+import re
+import html as ihtml
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -71,6 +73,87 @@ def _db_paths_for_send() -> tuple[str, str]:
     events_db = str(data_dir / "email_events.db")
     email_map_db = str(data_dir / "email_map.db")
     return events_db, email_map_db
+
+
+def _html_to_text(html_content: str) -> str:
+    """Best-effort plain-text alternative derived from HTML content."""
+    if not html_content:
+        return ""
+    txt = str(html_content)
+    txt = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", txt)
+    txt = re.sub(r"(?i)<br\s*/?>", "\n", txt)
+    txt = re.sub(r"(?i)</p\s*>", "\n\n", txt)
+    txt = re.sub(r"(?i)</(div|li|tr|h[1-6])\s*>", "\n", txt)
+    txt = re.sub(r"(?is)<[^>]+>", " ", txt)
+    txt = ihtml.unescape(txt)
+    txt = re.sub(r"[ \t\r\f\v]+", " ", txt)
+    txt = re.sub(r"\n{3,}", "\n\n", txt)
+    return txt.strip()
+
+
+def _render_rich_text_editor(initial_html: str, height: int = 320) -> tuple[str, bool]:
+    """Render a Jodit rich-text editor; return (html, ok)."""
+    try:
+        import streamlit_jodit as st_jodit  # type: ignore
+    except Exception:
+        return initial_html, False
+
+    jodit_cfg = {
+        "readonly": False,
+        "height": int(height),
+        "toolbarAdaptive": False,
+        "buttons": [
+            "bold",
+            "italic",
+            "underline",
+            "strikethrough",
+            "|",
+            "ul",
+            "ol",
+            "|",
+            "outdent",
+            "indent",
+            "|",
+            "left",
+            "center",
+            "right",
+            "justify",
+            "|",
+            "link",
+            "unlink",
+            "|",
+            "undo",
+            "redo",
+            "|",
+            "eraser",
+        ],
+    }
+
+    jodit_fn = getattr(st_jodit, "st_jodit", None)
+    if callable(jodit_fn):
+        try:
+            value = jodit_fn(config=jodit_cfg, value=initial_html, key="rich_body_editor")
+            if isinstance(value, str):
+                return value, True
+        except Exception:
+            pass
+
+    render_variants: list[callable] = []
+    for attr in ("jodit", "editor", "render"):
+        fn = getattr(st_jodit, attr, None)
+        if callable(fn):
+            render_variants.append(fn)
+    if callable(st_jodit):
+        render_variants.append(st_jodit)  # type: ignore[arg-type]
+
+    for fn in render_variants:
+        try:
+            value = fn(value=initial_html, key="rich_body_editor")
+            if isinstance(value, str):
+                return value, True
+        except Exception:
+            continue
+    return initial_html, False
 
 
 def _upsert_email_map(
@@ -245,8 +328,6 @@ def _render_recipient_manager(base_emails: List[str]) -> List[str]:
 
 def render_email_editor() -> None:
     """Render the email editor page (stable across reruns) with recipient manager."""
-    import re  # for manual exclusions parsing
-    import textwrap
 
     st.header("Email Campaign Editor")
 
@@ -263,6 +344,12 @@ def render_email_editor() -> None:
         st.session_state["preview_list"] = []          # preview from recommender
     if "editor_subject" not in st.session_state:
         st.session_state["editor_subject"] = ""        # sticky subject
+    if "compose_mode" not in st.session_state:
+        st.session_state["compose_mode"] = "HTML"
+    if "html_body" not in st.session_state:
+        st.session_state["html_body"] = ""
+    if "rich_body" not in st.session_state:
+        st.session_state["rich_body"] = st.session_state.get("html_body", "")
 
     # ---------- Prefill from MO (consume once) ----------
     incoming_mo = st.session_state.pop("mo_recipients", None)
@@ -529,12 +616,41 @@ def render_email_editor() -> None:
     )
     st.session_state["editor_subject"] = subject_value  # sticky
 
-    html_body = st.text_area(
-        "HTML Body",
-        height=300,
-        placeholder="<p>Hello {{ name }}, welcome to our newsletter.</p>",
-        key="html_body",
+    mode_index = 1 if st.session_state.get("compose_mode") == "Rich text" else 0
+    compose_mode = st.radio(
+        "Compose mode",
+        options=["HTML", "Rich text"],
+        index=mode_index,
+        key="compose_mode",
+        horizontal=True,
+        help="Use HTML for direct code editing, or Rich text for a Gmail-like toolbar.",
     )
+    html_body = st.session_state.get("html_body", "")
+
+    if compose_mode == "HTML":
+        html_body = st.text_area(
+            "HTML Body",
+            height=300,
+            placeholder="<p>Hello {{ name }}, welcome to our newsletter.</p>",
+            key="html_body",
+        )
+        st.session_state["rich_body"] = html_body
+    else:
+        rich_initial = st.session_state.get("rich_body") or st.session_state.get("html_body", "")
+        rich_html, rich_ok = _render_rich_text_editor(rich_initial, height=320)
+        if rich_ok:
+            st.session_state["rich_body"] = rich_html
+            st.session_state["html_body"] = rich_html
+            html_body = rich_html
+        else:
+            st.warning("Rich text editor unavailable. Falling back to HTML editor.")
+            html_body = st.text_area(
+                "HTML Body",
+                height=300,
+                placeholder="<p>Hello {{ name }}, welcome to our newsletter.</p>",
+                key="html_body",
+            )
+            st.session_state["rich_body"] = html_body
 
     can_send = bool(final_recipients) and bool(subject_value) and bool(html_body)
     send_button = st.button(
@@ -604,12 +720,14 @@ def render_email_editor() -> None:
                 {links_row}
                 </body>
                 </html>""")
+                text_body = _html_to_text(html_body)
 
                 try:
                     sender.send_email(
                         recipient=email,
                         msg_id=msg_id,
                         html=full_html,
+                        text=text_body or None,
                         subject=subject_value,
                         variant=variant,
                     )

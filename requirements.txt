@@ -2,6 +2,7 @@
 fastapi>=0.100
 uvicorn[standard]>=0.22
 streamlit>=1.30
+streamlit-jodit==3.1.0
 pydantic>=2.0
 requests>=2.31
 python-dotenv>=1.0
